@@ -1,0 +1,51 @@
+server:
+  port: 8089
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/car_rental_customer?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      timeout: 3000ms
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.car.customer.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+jwt:
+  secret: luxury-car-customer-jwt-secret-key-2024-very-long-secret
+  expiration: 7200000            # access token 2小时
+  refresh-expiration: 604800000  # refresh token 7天
+
+upload:
+  # 上传目录放在用户目录下，使用绝对路径，避免 Spring transferTo 将相对路径解析到 tomcat work 目录
+  path: ${user.home}/car_rental_customer_uploads
+  access-path: /uploads/**
+  resource-location: file:${user.home}/car_rental_customer_uploads/
+  # 头像等资源的外部访问基地址（供后台管理系统跨域访问）
+  base-url: http://192.168.5.185:8089
+
+logging:
+  level:
+    com.car.customer: debug
