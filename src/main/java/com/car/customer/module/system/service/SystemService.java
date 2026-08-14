@@ -2,11 +2,13 @@ package com.car.customer.module.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.car.customer.entity.Advantage;
+import com.car.customer.entity.City;
 import com.car.customer.entity.Review;
 import com.car.customer.entity.Store;
 import com.car.customer.entity.SysDictData;
 import com.car.customer.entity.SystemConfig;
 import com.car.customer.mapper.AdvantageMapper;
+import com.car.customer.mapper.CityMapper;
 import com.car.customer.mapper.ReviewMapper;
 import com.car.customer.mapper.StoreMapper;
 import com.car.customer.mapper.SysDictDataMapper;
@@ -29,6 +31,7 @@ public class SystemService {
 
     private final SystemConfigMapper systemConfigMapper;
     private final StoreMapper storeMapper;
+    private final CityMapper cityMapper;
     private final AdvantageMapper advantageMapper;
     private final ReviewMapper reviewMapper;
     private final SysDictDataMapper sysDictDataMapper;
@@ -80,7 +83,20 @@ public class SystemService {
 
     public List<Store> getStores() {
         return storeMapper.selectList(new LambdaQueryWrapper<Store>()
+                .eq(Store::getStatus, 1)
+                .orderByAsc(Store::getSort)
                 .orderByAsc(Store::getId));
+    }
+
+    /**
+     * 取车城市列表（仅启用状态，按 sort 升序）
+     * 对应 car_rental.customer_city，与 customer_store 通过 city_id 关联
+     */
+    public List<City> getCities() {
+        return cityMapper.selectList(new LambdaQueryWrapper<City>()
+                .eq(City::getStatus, 1)
+                .orderByAsc(City::getSort)
+                .orderByAsc(City::getId));
     }
 
     public List<Advantage> getAdvantages() {

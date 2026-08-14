@@ -19,7 +19,13 @@ public class CreateOrderDTO {
     @NotBlank(message = "联系电话不能为空")
     private String phone;
 
-    /** 用户优惠券实例ID（member_coupon.id，下单使用的券，对齐 v2 customer_order.coupon_user_id） */
+    /**
+     * 用户优惠券实例ID列表（member_coupon.id，v3 支持多张可叠加券）
+     * 兼容旧字段 couponUserId：若 couponUserIds 为空则回退使用 couponUserId
+     */
+    private List<Long> couponUserIds;
+
+    /** 旧字段兼容：单券下单时使用（v3 推荐用 couponUserIds） */
     private Long couponUserId;
 
     @NotEmpty(message = "下单车辆不能为空")

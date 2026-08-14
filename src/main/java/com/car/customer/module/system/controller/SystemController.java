@@ -2,6 +2,7 @@ package com.car.customer.module.system.controller;
 
 import com.car.customer.common.result.Result;
 import com.car.customer.entity.Advantage;
+import com.car.customer.entity.City;
 import com.car.customer.entity.Review;
 import com.car.customer.entity.Store;
 import com.car.customer.entity.SysDictData;
@@ -30,6 +31,15 @@ public class SystemController {
     @GetMapping("/stores")
     public Result<List<Store>> stores() {
         return Result.ok(systemService.getStores());
+    }
+
+    /**
+     * 取车城市列表（car_rental.customer_city，启用状态，按 sort 升序）
+     * 供结算页选择取车城市，与门店通过 cityId 关联
+     */
+    @GetMapping("/cities")
+    public Result<List<City>> cities() {
+        return Result.ok(systemService.getCities());
     }
 
     @GetMapping("/advantages")

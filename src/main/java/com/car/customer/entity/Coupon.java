@@ -59,6 +59,9 @@ public class Coupon {
     /** 适用范围 all全场通用/specified指定车辆 */
     private String applyScope;
 
+    /** 是否可叠加使用 0不可叠加/1可叠加（同一订单可同时使用多张 stackable=1 的券） */
+    private Integer stackable;
+
     private LocalDateTime validStartTime;
 
     private LocalDateTime validEndTime;

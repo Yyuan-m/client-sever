@@ -397,6 +397,135 @@ public class CouponService {
         return discount;
     }
 
+    // ============================================================
+    // 批量叠加（v3：支持多张可叠加券同时使用）
+    // 规则：
+    //   - 单张券：任意类型均可，正常抵扣
+    //   - 多张券：必须所有券 stackable=1，否则抛 BusinessException
+    //   - 时长券（duration）不参与叠加，只能单独使用
+    //   - 金额型券叠加：按 doCalculate 逐张计算后求和，不超过订单总额
+    // ============================================================
+
+    /**
+     * 批量校验多张券的叠加合法性（下单前校验）
+     * @param memberCouponIds 用户券实例ID列表
+     * @param memberId 用户ID
+     * @param carId 首辆车ID（指定车辆券范围校验用）
+     * @param amount 订单总金额（门槛校验用）
+     */
+    public void validateUsableBatch(List<Long> memberCouponIds, Long memberId, Long carId, BigDecimal amount) {
+        if (memberCouponIds == null || memberCouponIds.isEmpty()) return;
+        // 去重校验：同一张券不能重复使用
+        if (new java.util.HashSet<>(memberCouponIds).size() != memberCouponIds.size()) {
+            throw new BusinessException("不能重复使用同一张优惠券");
+        }
+        List<MemberCoupon> mcs = new ArrayList<>();
+        for (Long id : memberCouponIds) {
+            MemberCoupon mc = memberCouponMapper.selectById(id);
+            if (mc == null || !mc.getMemberId().equals(memberId)) {
+                throw new BusinessException("优惠券不存在或无权使用");
+            }
+            if (!"unused".equals(mc.getStatus())) {
+                throw new BusinessException("优惠券状态不可用: " + mc.getStatus());
+            }
+            if (mc.getExpireTime() != null && mc.getExpireTime().isBefore(LocalDateTime.now())) {
+                throw new BusinessException("优惠券已过期");
+            }
+            if (mc.getMinAmount() != null && amount != null && amount.compareTo(mc.getMinAmount()) < 0) {
+                throw new BusinessException("未达到优惠券使用门槛");
+            }
+            if ("specified".equals(mc.getApplyScope())) {
+                List<Long> carIds = couponMapper.selectCarIdsByCouponId(mc.getCouponId());
+                if (carId == null || !carIds.contains(carId)) {
+                    throw new BusinessException("该优惠券不适用于当前车辆");
+                }
+            }
+            mcs.add(mc);
+        }
+        // 多张券叠加规则校验
+        if (mcs.size() > 1) {
+            // 时长券不能参与叠加
+            for (MemberCoupon mc : mcs) {
+                if ("duration".equals(mc.getCouponType())) {
+                    throw new BusinessException("时长券不支持叠加使用，请单独使用");
+                }
+            }
+            // 所有券必须 stackable=1
+            for (MemberCoupon mc : mcs) {
+                if (mc.getStackable() == null || mc.getStackable() != 1) {
+                    throw new BusinessException("优惠券「" + mc.getCouponName() + "」不可叠加使用");
+                }
+            }
+        }
+    }
+
+    /**
+     * 批量锁定多张券（unused → locked，带乐观锁）
+     * 任一张锁定失败则回滚已锁定的券
+     */
+    @Transactional
+    public void lockForOrderBatch(List<Long> memberCouponIds, Long memberId) {
+        if (memberCouponIds == null || memberCouponIds.isEmpty()) return;
+        List<Long> locked = new ArrayList<>();
+        try {
+            for (Long id : memberCouponIds) {
+                lockForOrder(id, memberId);
+                locked.add(id);
+            }
+        } catch (RuntimeException e) {
+            // 回滚已锁定的券
+            for (Long id : locked) {
+                try { cancelLockForOrder(id, memberId); } catch (Exception ex) { /* 忽略 */ }
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * 批量取消锁定（订单失败/取消时回滚）
+     */
+    @Transactional
+    public void cancelLockForOrderBatch(List<Long> memberCouponIds, Long memberId) {
+        if (memberCouponIds == null || memberCouponIds.isEmpty()) return;
+        for (Long id : memberCouponIds) {
+            try { cancelLockForOrder(id, memberId); } catch (Exception e) { /* 忽略单张失败 */ }
+        }
+    }
+
+    /**
+     * 批量核销（订单支付完成时调用，幂等）
+     */
+    @Transactional
+    public void verifyForOrderBatch(List<Long> memberCouponIds, Long memberId, Long orderId) {
+        if (memberCouponIds == null || memberCouponIds.isEmpty()) return;
+        for (Long id : memberCouponIds) {
+            try { verifyForOrder(id, memberId, orderId); } catch (Exception e) { /* 忽略单张失败 */ }
+        }
+    }
+
+    /**
+     * 批量计算叠加优惠金额（下单预览用，不核销）
+     * 规则：逐张按 doCalculate 计算，求和后不超过订单总额
+     * @param memberCouponIds 用户券实例ID列表
+     * @param amount 订单总金额（叠加计算时每张券的门槛校验基于原始 amount，互不影响）
+     * @return 总优惠金额
+     */
+    public BigDecimal calculateDiscountForOrderBatch(List<Long> memberCouponIds, BigDecimal amount) {
+        if (memberCouponIds == null || memberCouponIds.isEmpty() || amount == null) return BigDecimal.ZERO;
+        BigDecimal totalDiscount = BigDecimal.ZERO;
+        for (Long id : memberCouponIds) {
+            MemberCoupon mc = memberCouponMapper.selectById(id);
+            if (mc == null) continue;
+            Coupon coupon = couponMapper.selectById(mc.getCouponId());
+            if (coupon == null) continue;
+            BigDecimal d = doCalculate(coupon, amount);
+            totalDiscount = totalDiscount.add(d);
+        }
+        // 叠加优惠不超过订单总额
+        if (totalDiscount.compareTo(amount) > 0) totalDiscount = amount;
+        return totalDiscount;
+    }
+
     private MemberCoupon getAndCheckOwnership(Long memberCouponId, Long memberId) {
         MemberCoupon mc = memberCouponMapper.selectById(memberCouponId);
         if (mc == null) {

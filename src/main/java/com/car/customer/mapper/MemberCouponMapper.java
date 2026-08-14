@@ -21,7 +21,8 @@ public interface MemberCouponMapper extends BaseMapper<MemberCoupon> {
     @Select("SELECT mc.*, " +
             "c.name AS coupon_name, c.type AS coupon_type, c.type_name AS coupon_type_name, " +
             "c.value AS coupon_value, c.min_amount AS min_amount, c.discount_cap AS discount_cap, " +
-            "c.apply_scope AS apply_scope " +
+            "c.apply_scope AS apply_scope, c.stackable AS stackable, " +
+            "c.valid_start_time AS valid_start_time, c.valid_end_time AS valid_end_time " +
             "FROM member_coupon mc " +
             "LEFT JOIN car_rental.coupon c ON mc.coupon_id = c.id AND c.is_delete = 0 " +
             "WHERE mc.member_id = #{memberId} AND mc.is_delete = 0 " +

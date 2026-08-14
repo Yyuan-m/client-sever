@@ -59,6 +59,8 @@ public class PriceService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter MONTH_DAY_FMT = DateTimeFormatter.ofPattern("MM-dd");
+    /** 单次每车最大租期（前后端双校验，加强保障） */
+    private static final int MAX_RENT_DAYS = 20;
 
     /** 原始节假日规则（来自数据库，公历 MM-DD 或 lunar:MM-DD） */
     private volatile List<String> holidayRules = Collections.emptyList();
@@ -190,6 +192,11 @@ public class PriceService {
         }
         if (!endDate.isAfter(startDate)) {
             throw new BusinessException("结束日期必须晚于开始日期");
+        }
+        // 校验租期上限（前后端双校验，防止绕过前端提交超长租期）
+        long rentDaysCheck = ChronoUnit.DAYS.between(startDate, endDate);
+        if (rentDaysCheck > MAX_RENT_DAYS) {
+            throw new BusinessException("单次每车最多租 " + MAX_RENT_DAYS + " 天");
         }
 
         // 兜底系数（数据库默认 1.000）

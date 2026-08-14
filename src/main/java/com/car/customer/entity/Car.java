@@ -107,6 +107,14 @@ public class Car {
     @TableField(exist = false)
     private BigDecimal couponPrice;
 
+    /** 券后价对应的起步天数（满减券按最低满足天数折算时填充，前端展示"X天起"用） */
+    @TableField(exist = false)
+    private Integer couponMinDays;
+
+    /** 券标签（如"免1天"，用于列表/卡片展示时长券提示；金额型券不填） */
+    @TableField(exist = false)
+    private String couponBadge;
+
     /** 最早可租日期：已出租/已预约时由 Service 关联 rental_order 计算得到（到期日 + 2 天整备期），否则 null */
     @TableField(exist = false)
     private LocalDate availableDate;

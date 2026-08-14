@@ -41,6 +41,8 @@ public class CarService {
     private static final int PREP_DAYS = 2;
     /** 视为"未完成"的订单状态：仍占用车辆时间线 */
     private static final List<String> OCCUPIED_STATUSES = List.of("pending", "renting");
+    /** 单次每车最大租期（与前端一致，前后端双校验） */
+    private static final int MAX_RENT_DAYS = 20;
 
     /**
      * 车辆列表分页查询（支持类型/关键字/价格区间/状态/排序）
@@ -131,13 +133,17 @@ public class CarService {
      * 为车辆列表注入券后日租金 couponPrice
      * 仅登录用户、且拥有可用未使用优惠券时计算，取最优（最低）券后价
      *
-     * v2 计算规则（与 CouponService.doCalculate 对齐）：
+     * v3 计算规则（修复 v2 把订单总额门槛对着日租金校验的 bug）：
      *   - discount 折扣券：couponPrice = dailyPrice × value（0.88=88折），并受 discountCap 封顶（封顶作用于优惠额）
-     *     若 minAmount != null 且 dailyPrice < minAmount，则不适用
-     *   - deduction 满减券：仅当 dailyPrice ≥ minAmount 时适用，couponPrice = dailyPrice - value
-     *   - duration 时长券：日租金维度无法准确计算，跳过
+     *     门槛 minAmount 是"订单总额门槛"，列表页未知租期，按"在 MAX_RENT_DAYS 内可达"判定：
+     *     即 ceil(minAmount / dailyPrice) ≤ MAX_RENT_DAYS 才视为可用（用户在合规租期内能凑到门槛）
+     *   - deduction 满减券：minAmount 同上判定；券后日单价按"最低满足天数"折算：
+     *     minDays = max(1, ceil(minAmount / dailyPrice))，couponPrice = dailyPrice - value / minDays
+     *     （把固定满减额摊到最低满足天数上，得到"最低每日起价"）
+     *     若 value ≥ dailyPrice × minDays（券后为负或0）则不展示
+     *   - duration 时长券：列表不折算日单价（避免"2天免1天=半价"误导），仅在 car.couponBadge 挂"免X天"提示
      *   - applyScope=specified 时需校验车辆是否在关联列表中
-     *   - couponPrice ≥ 0 且 < dailyPrice 才设置，否则保持 null
+     *   - couponPrice ≥ 0 且 < dailyPrice 才设置；多张券取最低价；同时回填 couponMinDays
      */
     private void enrichWithCouponPrice(List<Car> cars) {
         if (cars == null || cars.isEmpty()) return;
@@ -159,41 +165,77 @@ public class CarService {
 
         for (Car car : cars) {
             BigDecimal dailyPrice = car.getDailyPrice();
-            if (dailyPrice == null) continue;
+            if (dailyPrice == null || dailyPrice.compareTo(BigDecimal.ZERO) <= 0) continue;
 
             BigDecimal bestPrice = null;
+            Integer bestMinDays = null;
+            String bestBadge = null;
             for (MemberCoupon mc : usable) {
-                // 门槛校验
-                if (mc.getMinAmount() != null && dailyPrice.compareTo(mc.getMinAmount()) < 0) continue;
                 // 适用范围校验
                 if ("specified".equals(mc.getApplyScope())) {
                     List<Long> carIds = specifiedCarMap.computeIfAbsent(mc.getCouponId(),
                             k -> couponMapper.selectCarIdsByCouponId(k));
                     if (!carIds.contains(car.getId())) continue;
                 }
-                BigDecimal couponPrice = calcDailyCouponPrice(dailyPrice, mc);
-                if (couponPrice == null) continue;
-                if (bestPrice == null || couponPrice.compareTo(bestPrice) < 0) {
-                    bestPrice = couponPrice;
+                // 计算该券对该车的券后日单价（返回 [券后价, 起步天数, 徽标]）
+                CouponDailyResult r = calcDailyCouponPrice(dailyPrice, mc);
+                if (r == null) continue;
+                // 取券后价最低者；同价时优先折扣券（minDays 更小）
+                if (r.price != null
+                        && r.price.compareTo(BigDecimal.ZERO) >= 0
+                        && r.price.compareTo(dailyPrice) < 0) {
+                    if (bestPrice == null || r.price.compareTo(bestPrice) < 0) {
+                        bestPrice = r.price;
+                        bestMinDays = r.minDays;
+                    }
+                }
+                // 时长券徽标：取面值最大的那张作为提示
+                if (r.badge != null) {
+                    if (bestBadge == null || r.badgeDays > parseBadgeDays(bestBadge)) {
+                        bestBadge = r.badge;
+                    }
                 }
             }
-            if (bestPrice != null
-                    && bestPrice.compareTo(BigDecimal.ZERO) >= 0
-                    && bestPrice.compareTo(dailyPrice) < 0) {
+            if (bestPrice != null) {
                 car.setCouponPrice(bestPrice.setScale(2, RoundingMode.HALF_UP));
+                car.setCouponMinDays(bestMinDays);
+            }
+            if (bestBadge != null) {
+                car.setCouponBadge(bestBadge);
             }
         }
     }
 
+    /** 从"免X天"徽标文本提取天数，用于比较面值 */
+    private int parseBadgeDays(String badge) {
+        if (badge == null) return 0;
+        try {
+            // 形如 "免1天" / "免3天"
+            String num = badge.replaceAll("[^0-9]", "");
+            return num.isEmpty() ? 0 : Integer.parseInt(num);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** 单券对单车的日租金折算结果 */
+    private static class CouponDailyResult {
+        BigDecimal price;   // 券后日单价（时长券为 null）
+        Integer minDays;     // 起步天数（满减券为最低满足天数，折扣券为 1）
+        String badge;        // 时长券徽标（金额型券为 null）
+        int badgeDays;       // 徽标对应天数（用于比较面值）
+    }
+
     /**
-     * 根据优惠券类型计算日租金券后价（v2 模型）
-     * @return 券后价；不适用时返回 null
+     * 根据优惠券类型计算日租金券后价（v3 模型）
+     * @return CouponDailyResult；不适用时返回 null
      */
-    private BigDecimal calcDailyCouponPrice(BigDecimal dailyPrice, MemberCoupon mc) {
+    private CouponDailyResult calcDailyCouponPrice(BigDecimal dailyPrice, MemberCoupon mc) {
         if (mc == null || dailyPrice == null || mc.getCouponType() == null) return null;
         String type = mc.getCouponType();
         BigDecimal value = mc.getCouponValue();
         if (value == null) return null;
+        CouponDailyResult r = new CouponDailyResult();
         switch (type) {
             case "discount":
                 // 折扣值 0.88 表示 88 折，券后价 = dailyPrice × 0.88
@@ -203,14 +245,43 @@ public class CarService {
                     BigDecimal save = dailyPrice.subtract(discounted);
                     if (save.compareTo(mc.getDiscountCap()) > 0) {
                         // 优惠被封顶，券后价 = dailyPrice - discountCap
-                        return dailyPrice.subtract(mc.getDiscountCap());
+                        discounted = dailyPrice.subtract(mc.getDiscountCap());
                     }
                 }
-                return discounted;
+                // 门槛：按 MAX_RENT_DAYS 内可达判定
+                if (mc.getMinAmount() != null && mc.getMinAmount().compareTo(BigDecimal.ZERO) > 0) {
+                    int needDays = (int) Math.ceil(mc.getMinAmount().doubleValue() / dailyPrice.doubleValue());
+                    if (needDays > MAX_RENT_DAYS) return null;
+                }
+                r.price = discounted;
+                r.minDays = 1;
+                return r;
             case "deduction":
-                // 满减券：券后价 = dailyPrice - value（minAmount 已在调用方校验）
-                return dailyPrice.subtract(value);
+                // 满减券：minDays = ceil(minAmount / dailyPrice)，券后日单价 = dailyPrice - value/minDays
+                int minDays = 1;
+                if (mc.getMinAmount() != null && mc.getMinAmount().compareTo(BigDecimal.ZERO) > 0) {
+                    minDays = (int) Math.ceil(mc.getMinAmount().doubleValue() / dailyPrice.doubleValue());
+                    if (minDays < 1) minDays = 1;
+                    if (minDays > MAX_RENT_DAYS) return null; // 20 天内凑不到门槛，列表不展示
+                }
+                // 每天摊销的优惠额
+                BigDecimal perDayDiscount = value.divide(BigDecimal.valueOf(minDays), 2, RoundingMode.HALF_UP);
+                BigDecimal couponPrice = dailyPrice.subtract(perDayDiscount);
+                // 券后价必须为正且低于原价
+                if (couponPrice.compareTo(BigDecimal.ZERO) <= 0
+                        || couponPrice.compareTo(dailyPrice) >= 0) {
+                    return null;
+                }
+                r.price = couponPrice;
+                r.minDays = minDays;
+                return r;
             case "duration":
+                // 时长券：列表不折算日单价，仅挂徽标
+                int freeDays = value.intValue();
+                if (freeDays <= 0) return null;
+                r.badge = "免" + freeDays + "天";
+                r.badgeDays = freeDays;
+                return r;
             default:
                 return null;
         }

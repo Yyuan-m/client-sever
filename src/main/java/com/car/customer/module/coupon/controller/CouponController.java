@@ -52,7 +52,7 @@ public class CouponController {
         return Result.ok(couponService.listMine(status));
     }
 
-    /** 下单可用券（一辆车下可用多张，但下单只能选一张，由前端限制） */
+    /** 下单可用券（v3 支持多张可叠加券，返回列表含 stackable 字段供前端判断叠加规则） */
     @GetMapping("/usable")
     public Result<List<MemberCoupon>> usable(
             @RequestParam(required = false) Long carId,

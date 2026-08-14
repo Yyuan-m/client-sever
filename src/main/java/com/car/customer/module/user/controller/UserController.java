@@ -9,7 +9,6 @@ import com.car.customer.module.user.dto.ProfileDTO;
 import com.car.customer.module.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -24,9 +23,6 @@ public class UserController {
     private final UserService userService;
     private final UploadService uploadService;
 
-    @Value("${upload.base-url}")
-    private String uploadBaseUrl;
-
     @PutMapping("/profile")
     public Result<MemberVO> updateProfile(@RequestBody ProfileDTO dto) {
         return Result.ok(userService.updateProfile(dto));
@@ -34,14 +30,14 @@ public class UserController {
 
     @PostMapping("/avatar")
     public Result<Map<String, Object>> uploadAvatar(@RequestParam("file") MultipartFile file) {
+        // UploadService 只返回相对路径，数据库只存相对路径，
+        // 前端根据图片来源（客户端 8089）拼接完整 URL
         Map<String, Object> result = uploadService.upload(file);
-        // 拼接完整外网 URL 写入数据库，确保后台管理系统可跨域访问头像
         String relativePath = result.get("url").toString();
-        String fullUrl = uploadBaseUrl + relativePath;
         ProfileDTO profile = new ProfileDTO();
-        profile.setAvatar(fullUrl);
+        profile.setAvatar(relativePath);
         userService.updateProfile(profile);
-        result.put("url", fullUrl);
+        result.put("url", relativePath);
         return Result.ok(result);
     }
 

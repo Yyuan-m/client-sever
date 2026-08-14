@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -46,5 +47,33 @@ public class OrderController {
     public Result<Void> pay(@PathVariable Long id) {
         orderService.payOrder(id);
         return Result.ok();
+    }
+
+    /**
+     * 确认还车：renting → completed，并置评价状态为待评价
+     * 用户在订单详情页主动点击"确认还车"触发（到期也会自动完成，此为提前还车入口）
+     */
+    @PutMapping("/complete/{id}")
+    public Result<Void> complete(@PathVariable Long id) {
+        orderService.completeOrder(id);
+        return Result.ok();
+    }
+
+    /**
+     * 我的进行中订单（首页"我的订单"模块用）
+     * 返回租赁中 + 待评价订单（status=renting 或 reviewStatus=unreviewed），按创建时间倒序，最多 limit 条
+     */
+    @GetMapping("/active")
+    public Result<List<RentalOrder>> active(@RequestParam(defaultValue = "6") Integer limit) {
+        return Result.ok(orderService.getMyActiveOrders(limit));
+    }
+
+    /**
+     * 可评价订单列表（个人中心"去评价"入口用）
+     * 返回 reviewStatus=unreviewed（可首评）或 reviewed（可追评）的已完成订单
+     */
+    @GetMapping("/reviewable")
+    public Result<List<RentalOrder>> reviewable() {
+        return Result.ok(orderService.getReviewableOrders());
     }
 }

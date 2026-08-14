@@ -6,24 +6,19 @@ import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 取车城市（对应 car_rental.customer_city，与 customer_store 通过 city_id 关联）
+ */
 @Data
-@TableName("car_rental.customer_store")
-public class Store {
+@TableName("car_rental.customer_city")
+public class City {
 
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 所属城市ID（关联 customer_city.id） */
-    private Long cityId;
-
     private String name;
-    private String address;
-    private String phone;
-    private BigDecimal lat;
-    private BigDecimal lng;
     private Integer sort;
     private Integer status;
 

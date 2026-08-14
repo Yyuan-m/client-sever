@@ -85,4 +85,16 @@ public class MemberCoupon {
     /** 适用范围 */
     @TableField(exist = false)
     private String applyScope;
+
+    /** 是否可叠加使用（来自 coupon 表，0不可叠加/1可叠加） */
+    @TableField(exist = false)
+    private Integer stackable;
+
+    /** 券模板生效起始时间（来自 coupon 表，展示用） */
+    @TableField(exist = false)
+    private LocalDateTime validStartTime;
+
+    /** 券模板生效结束时间（来自 coupon 表，展示用） */
+    @TableField(exist = false)
+    private LocalDateTime validEndTime;
 }

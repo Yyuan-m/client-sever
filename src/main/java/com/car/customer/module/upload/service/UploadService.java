@@ -39,6 +39,7 @@ public class UploadService {
 
     /**
      * 上传文件，返回 {url: "/uploads/yyyyMM/xxx.jpg"}
+     * 只返回相对路径，由前端根据图片来源拼接对应服务的 baseURL（8088 或 8089）。
      * 使用 file.getBytes() + FileOutputStream 写入，规避 Spring transferTo 将相对路径
      * 解析到 tomcat work 目录的问题。
      */
@@ -74,6 +75,7 @@ public class UploadService {
             throw new BusinessException("上传文件失败: " + e.getClass().getSimpleName() + " - " + e.getMessage());
         }
 
+        // 只返回相对路径，前端负责拼接完整 URL
         Map<String, Object> result = new HashMap<>();
         result.put("url", "/uploads/" + monthDir + "/" + fileName);
         return result;
