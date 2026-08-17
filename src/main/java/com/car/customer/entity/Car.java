@@ -119,6 +119,10 @@ public class Car {
     @TableField(exist = false)
     private LocalDate availableDate;
 
+    /** 不可租原因：车辆租赁中 / 已被预约 / 车辆维修保养中；可租时为 null */
+    @TableField(exist = false)
+    private String rentReason;
+
     /** 标记是否来自后台管理库（现在所有车辆均来自 car_rental.car_info，固定 true） */
     @TableField(exist = false)
     private Boolean fromAdminDb;

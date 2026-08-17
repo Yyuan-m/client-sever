@@ -21,6 +21,9 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 车辆服务（所有数据来自 car_rental.car_info + car_rental.car_config，图片取自 car_info.images）
@@ -60,6 +63,8 @@ public class CarService {
         });
         // 登录用户注入券后价
         enrichWithCouponPrice(p.getRecords());
+        // 注入被租状态/原因/最早可租日期（基于实际订单）
+        enrichAvailability(p.getRecords());
         return PageResult.of(p);
     }
 
@@ -82,8 +87,8 @@ public class CarService {
         car.setConfig(config != null ? config : emptyConfig());
         // 注入券后价
         enrichWithCouponPrice(List.of(car));
-        // 注入最早可租日期（关联未完成订单的到期日 + 整备期）
-        enrichAvailableDate(car);
+        // 注入被租状态/原因/最早可租日期（基于实际订单）
+        enrichAvailability(List.of(car));
         return car;
     }
 
@@ -98,6 +103,7 @@ public class CarService {
             parseImages(car);
         });
         enrichWithCouponPrice(cars);
+        enrichAvailability(cars);
         return cars;
     }
 
@@ -292,30 +298,60 @@ public class CarService {
     // ============================================================
 
     /**
-     * 注入最早可租日期 availableDate
-     * 查询该车所有未完成订单（pending/renting）的最大 end_date，加整备期 PREP_DAYS
-     * 仅在存在未完成订单时设置；空闲车辆保持 null
+     * 批量注入被租状态/原因/最早可租日期
+     * 以实际订单为准（pending/renting），覆盖 car_info.status 可能不准确的问题：
+     *   - 有占用订单 → status='rented' / statusName='已出租' / rentReason / availableDate
+     *   - 无订单但 car_info.status 为维修类 → rentReason='车辆维修保养中'
+     *   - 其余 → 维持可租，rentReason=null
+     * 一次查询所有相关订单，避免 N+1
      */
-    private void enrichAvailableDate(Car car) {
-        if (car == null || car.getId() == null) return;
-        List<RentalOrder> occupied = rentalOrderMapper.selectList(new LambdaQueryWrapper<RentalOrder>()
-                .eq(RentalOrder::getCarId, car.getId())
+    private void enrichAvailability(List<Car> cars) {
+        if (cars == null || cars.isEmpty()) return;
+
+        // 1) 维修中车辆：直接设置原因
+        cars.stream()
+                .filter(c -> "maintenance".equals(c.getStatus()))
+                .forEach(c -> c.setRentReason("车辆维修保养中"));
+
+        // 2) 一次性查询所有车辆的占用订单（pending/renting）
+        List<Long> carIds = cars.stream()
+                .map(Car::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        if (carIds.isEmpty()) return;
+        List<RentalOrder> allOccupied = rentalOrderMapper.selectList(new LambdaQueryWrapper<RentalOrder>()
+                .in(RentalOrder::getCarId, carIds)
                 .in(RentalOrder::getStatus, OCCUPIED_STATUSES));
-        if (occupied.isEmpty()) return;
-        LocalDate maxEnd = occupied.stream()
-                .map(RentalOrder::getEndDate)
-                .filter(java.util.Objects::nonNull)
-                .max(LocalDate::compareTo)
-                .orElse(null);
-        if (maxEnd == null) return;
-        // 整备期：到期日 + PREP_DAYS 后方可起租
-        LocalDate available = maxEnd.plusDays(PREP_DAYS);
-        // 若算出的可租日早于今天，则以下个自然日为最早可租日（保证前端可选）
+        // 按车分组
+        Map<Long, List<RentalOrder>> byCar = allOccupied.stream()
+                .collect(Collectors.groupingBy(RentalOrder::getCarId));
+
         LocalDate today = LocalDate.now();
-        if (available.isBefore(today)) {
-            available = today;
+        for (Car car : cars) {
+            List<RentalOrder> occupied = byCar.get(car.getId());
+            if (occupied == null || occupied.isEmpty()) continue;
+
+            // 有占用订单：强制标记为已出租（覆盖 car_info.status 可能不准的情况）
+            car.setStatus("rented");
+            car.setStatusName("已出租");
+
+            // 原因：优先"租赁中"（renting），其次"已被预约"（pending）
+            boolean hasRenting = occupied.stream().anyMatch(o -> "renting".equals(o.getStatus()));
+            car.setRentReason(hasRenting ? "车辆租赁中" : "已被预约");
+
+            // 最早可租日：最大到期日 + 整备期
+            LocalDate maxEnd = occupied.stream()
+                    .map(RentalOrder::getEndDate)
+                    .filter(Objects::nonNull)
+                    .max(LocalDate::compareTo)
+                    .orElse(null);
+            if (maxEnd == null) continue;
+            LocalDate available = maxEnd.plusDays(PREP_DAYS);
+            if (available.isBefore(today)) {
+                available = today;
+            }
+            car.setAvailableDate(available);
         }
-        car.setAvailableDate(available);
     }
 
     private CarConfig emptyConfig() {

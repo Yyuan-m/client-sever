@@ -37,6 +37,8 @@ public class SecurityConfig {
                         ).permitAll()
                         // 车辆/轮播/系统配置仅允许 GET 公开访问，写操作需鉴权
                         .requestMatchers(HttpMethod.GET, "/api/car/**", "/api/carousel/**", "/api/system/**").permitAll()
+                        // 公告：GET 公开访问（头部下拉/列表/详情）
+                        .requestMatchers(HttpMethod.GET, "/api/announcement/**").permitAll()
                         // 价格计算接口公开访问（车辆详情页未登录也能查看准确价格）
                         .requestMatchers("/api/price/**").permitAll()
                         // 优惠券：可领券列表 + 券详情 公开访问；其他接口（mine/usable/receive/lock/verify/claimed-ids）需鉴权
