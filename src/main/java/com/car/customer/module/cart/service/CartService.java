@@ -72,6 +72,11 @@ public class CartService {
         if (dto.getDays() != null && dto.getDays() > MAX_RENT_DAYS) {
             throw new BusinessException("单次每车最多租 " + MAX_RENT_DAYS + " 天");
         }
+        // 校验最小起租天数（车辆级 minRentDays 与券后价 couponMinDays 取最大值，前后端双校验）
+        Integer minDays = carService.resolveMinRentDays(car);
+        if (minDays != null && dto.getDays() != null && dto.getDays() < minDays) {
+            throw new BusinessException("车辆「" + car.getName() + "」需至少租 " + minDays + " 天起");
+        }
 
         // 检查是否已在购物车
         LambdaQueryWrapper<Cart> wrapper = new LambdaQueryWrapper<Cart>()

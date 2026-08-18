@@ -4,6 +4,7 @@ import com.car.customer.common.result.PageResult;
 import com.car.customer.common.result.Result;
 import com.car.customer.entity.Car;
 import com.car.customer.module.car.service.CarService;
+import com.car.customer.module.car.vo.CarImageGroupVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,6 +34,16 @@ public class CarController {
     @GetMapping("/detail/{id}")
     public Result<Car> detail(@PathVariable Long id) {
         return Result.ok(carService.getCarDetail(id));
+    }
+
+    /**
+     * 查询车辆所有素材图片并按分类分组（用于详情页分类展示）
+     * 数据来自 car_rental.car_image 表，通过 vehicle_id 关联车辆
+     * @param id 车辆 ID
+     */
+    @GetMapping("/{id}/images")
+    public Result<List<CarImageGroupVO>> getCarImages(@PathVariable Long id) {
+        return Result.ok(carService.getCarImagesGroupedByCategory(id));
     }
 
     @GetMapping("/hot")

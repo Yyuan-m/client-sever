@@ -96,6 +96,11 @@ public class OrderService {
                 if (item.getDays() != null && item.getDays() > MAX_RENT_DAYS) {
                     throw new BusinessException("车辆「" + car.getName() + "」单次最多租 " + MAX_RENT_DAYS + " 天");
                 }
+                // 校验最小起租天数（车辆级 minRentDays 与券后价 couponMinDays 取最大值，前后端双校验）
+                Integer minDays = carService.resolveMinRentDays(car);
+                if (minDays != null && item.getDays() != null && item.getDays() < minDays) {
+                    throw new BusinessException("车辆「" + car.getName() + "」需至少租 " + minDays + " 天起");
+                }
 
                 RentalOrder order = new RentalOrder();
                 order.setOrderNo(generateOrderNo());

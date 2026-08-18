@@ -8,6 +8,7 @@ import com.car.customer.common.result.PageResult;
 import com.car.customer.common.util.SecurityUtil;
 import com.car.customer.entity.*;
 import com.car.customer.mapper.*;
+import com.car.customer.module.car.vo.CarImageGroupVO;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -18,8 +19,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,6 +38,7 @@ public class CarService {
 
     private final CarMapper carMapper;
     private final CarConfigMapper carConfigMapper;
+    private final CarImageMapper carImageMapper;
     private final ObjectMapper objectMapper;
     private final CouponMapper couponMapper;
     private final MemberCouponMapper memberCouponMapper;
@@ -108,6 +112,31 @@ public class CarService {
     }
 
     /**
+     * 查询车辆所有素材图片并按 category 分组（用于车辆详情页分类展示）
+     * 数据来自 car_rental.car_image 表，通过 vehicle_id 关联车辆
+     * @param carId 车辆 ID（car_rental.car_info.id）
+     * @return 按 category 分组的图片列表；无数据时返回空列表
+     */
+    public List<CarImageGroupVO> getCarImagesGroupedByCategory(Long carId) {
+        List<CarImage> images = carImageMapper.selectByVehicleId(carId);
+        if (images == null || images.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 按 category 分组，保持首次出现顺序（LinkedHashMap）
+        Map<String, List<String>> grouped = new LinkedHashMap<>();
+        for (CarImage img : images) {
+            String category = img.getCategory() != null ? img.getCategory() : "其他";
+            grouped.computeIfAbsent(category, k -> new ArrayList<>()).add(img.getUrl());
+        }
+        return grouped.entrySet().stream().map(e -> {
+            CarImageGroupVO vo = new CarImageGroupVO();
+            vo.setCategory(e.getKey());
+            vo.setImages(e.getValue());
+            return vo;
+        }).collect(Collectors.toList());
+    }
+
+    /**
      * 切换车型推荐状态（后台管理配置，客户库 car 表已删除，此方法暂不可用）
      */
     public Car toggleRecommend(Long id, Integer isRecommend) {
@@ -134,6 +163,17 @@ public class CarService {
     // ============================================================
     // 券后价计算
     // ============================================================
+
+    /**
+     * 获取车辆最小起租天数（car_info.min_rent_days 字段）
+     * 用于加购/下单时的最小租期校验（前后端双校验）
+     * @return 起租天数（≥1）；字段为 null 时兜底为 1
+     */
+    public Integer resolveMinRentDays(Car car) {
+        if (car == null) return 1;
+        return car.getMinRentDays() != null ? Math.max(1, car.getMinRentDays()) : 1;
+    }
+
 
     /**
      * 为车辆列表注入券后日租金 couponPrice

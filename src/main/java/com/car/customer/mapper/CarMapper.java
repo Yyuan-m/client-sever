@@ -43,6 +43,7 @@ public interface CarMapper extends BaseMapper<Car> {
                     ELSE ci.type
                 END AS type_name,
                 ci.daily_price,
+                ci.min_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,
@@ -141,6 +142,7 @@ public interface CarMapper extends BaseMapper<Car> {
                     ELSE ci.type
                 END AS type_name,
                 ci.daily_price,
+                ci.min_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,
@@ -194,6 +196,7 @@ public interface CarMapper extends BaseMapper<Car> {
                     ELSE ci.type
                 END AS type_name,
                 ci.daily_price,
+                ci.min_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,

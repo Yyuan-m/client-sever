@@ -36,6 +36,9 @@ public class Car {
 
     private BigDecimal dailyPrice;
 
+    /** 最小起租天数（车辆级硬性限制，默认 1） */
+    private Integer minRentDays;
+
     /** 周租折扣系数（7-29 天适用，如 0.92 表示 92% 价格） */
     private BigDecimal weeklyDiscount;
 
