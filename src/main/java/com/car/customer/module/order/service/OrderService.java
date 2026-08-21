@@ -46,8 +46,6 @@ public class OrderService {
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     /** 待支付订单超时时间（分钟），超时自动取消 */
     private static final int PAY_TIMEOUT_MINUTES = 5;
-    /** 单次每车最大租期（前后端双校验，加强保障） */
-    private static final int MAX_RENT_DAYS = 20;
 
     /**
      * 创建订单（购物车每个车辆生成独立订单）
@@ -92,9 +90,10 @@ public class OrderService {
                 if (!"available".equals(car.getStatus())) {
                     throw new BusinessException("车辆「" + car.getName() + "」当前不可租");
                 }
-                // 校验租期上限（前后端双校验）
-                if (item.getDays() != null && item.getDays() > MAX_RENT_DAYS) {
-                    throw new BusinessException("车辆「" + car.getName() + "」单次最多租 " + MAX_RENT_DAYS + " 天");
+                // 校验最大租期（车辆级 maxRentDays，null 不限；前后端双校验）
+                Integer maxDays = carService.resolveMaxRentDays(car);
+                if (maxDays != null && item.getDays() != null && item.getDays() > maxDays) {
+                    throw new BusinessException("车辆「" + car.getName() + "」单次最多租 " + maxDays + " 天");
                 }
                 // 校验最小起租天数（车辆级 minRentDays 与券后价 couponMinDays 取最大值，前后端双校验）
                 Integer minDays = carService.resolveMinRentDays(car);

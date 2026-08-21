@@ -48,8 +48,6 @@ public class CarService {
     private static final int PREP_DAYS = 2;
     /** 视为"未完成"的订单状态：仍占用车辆时间线 */
     private static final List<String> OCCUPIED_STATUSES = List.of("pending", "renting");
-    /** 单次每车最大租期（与前端一致，前后端双校验） */
-    private static final int MAX_RENT_DAYS = 20;
 
     /**
      * 车辆列表分页查询（支持类型/关键字/价格区间/状态/排序）
@@ -174,6 +172,17 @@ public class CarService {
         return car.getMinRentDays() != null ? Math.max(1, car.getMinRentDays()) : 1;
     }
 
+    /**
+     * 获取车辆最大租期天数（car_info.max_rent_days 字段）
+     * 用于加购/下单/价格计算时的最大租期校验（前后端双校验）
+     * @return 最大租期天数；字段为 null 或 <=0 时返回 null（表示不限租期）
+     */
+    public Integer resolveMaxRentDays(Car car) {
+        if (car == null) return null;
+        Integer max = car.getMaxRentDays();
+        return max != null && max > 0 ? max : null;
+    }
+
 
     /**
      * 为车辆列表注入券后日租金 couponPrice
@@ -181,8 +190,8 @@ public class CarService {
      *
      * v3 计算规则（修复 v2 把订单总额门槛对着日租金校验的 bug）：
      *   - discount 折扣券：couponPrice = dailyPrice × value（0.88=88折），并受 discountCap 封顶（封顶作用于优惠额）
-     *     门槛 minAmount 是"订单总额门槛"，列表页未知租期，按"在 MAX_RENT_DAYS 内可达"判定：
-     *     即 ceil(minAmount / dailyPrice) ≤ MAX_RENT_DAYS 才视为可用（用户在合规租期内能凑到门槛）
+     *     门槛 minAmount 是"订单总额门槛"，列表页未知租期，按"在该车最大租期内可达"判定：
+     *     即 ceil(minAmount / dailyPrice) ≤ maxRentDays 才视为可用（用户在合规租期内能凑到门槛）
      *   - deduction 满减券：minAmount 同上判定；券后日单价按"最低满足天数"折算：
      *     minDays = max(1, ceil(minAmount / dailyPrice))，couponPrice = dailyPrice - value / minDays
      *     （把固定满减额摊到最低满足天数上，得到"最低每日起价"）
@@ -224,7 +233,7 @@ public class CarService {
                     if (!carIds.contains(car.getId())) continue;
                 }
                 // 计算该券对该车的券后日单价（返回 [券后价, 起步天数, 徽标]）
-                CouponDailyResult r = calcDailyCouponPrice(dailyPrice, mc);
+                CouponDailyResult r = calcDailyCouponPrice(dailyPrice, car.getMaxRentDays(), mc);
                 if (r == null) continue;
                 // 取券后价最低者；同价时优先折扣券（minDays 更小）
                 if (r.price != null
@@ -274,13 +283,17 @@ public class CarService {
 
     /**
      * 根据优惠券类型计算日租金券后价（v3 模型）
+     * @param dailyPrice   车辆日租金
+     * @param maxRentDays  车辆最大租期（null=不限）；满减/折扣券门槛需在该租期内可达才展示券后价
      * @return CouponDailyResult；不适用时返回 null
      */
-    private CouponDailyResult calcDailyCouponPrice(BigDecimal dailyPrice, MemberCoupon mc) {
+    private CouponDailyResult calcDailyCouponPrice(BigDecimal dailyPrice, Integer maxRentDays, MemberCoupon mc) {
         if (mc == null || dailyPrice == null || mc.getCouponType() == null) return null;
         String type = mc.getCouponType();
         BigDecimal value = mc.getCouponValue();
         if (value == null) return null;
+        // 车辆最大租期：null 或 <=0 视为不限
+        int maxDays = maxRentDays != null && maxRentDays > 0 ? maxRentDays : Integer.MAX_VALUE;
         CouponDailyResult r = new CouponDailyResult();
         switch (type) {
             case "discount":
@@ -294,10 +307,10 @@ public class CarService {
                         discounted = dailyPrice.subtract(mc.getDiscountCap());
                     }
                 }
-                // 门槛：按 MAX_RENT_DAYS 内可达判定
+                // 门槛：按该车最大租期内可达判定（不限则任意租期均可）
                 if (mc.getMinAmount() != null && mc.getMinAmount().compareTo(BigDecimal.ZERO) > 0) {
                     int needDays = (int) Math.ceil(mc.getMinAmount().doubleValue() / dailyPrice.doubleValue());
-                    if (needDays > MAX_RENT_DAYS) return null;
+                    if (needDays > maxDays) return null;
                 }
                 r.price = discounted;
                 r.minDays = 1;
@@ -308,7 +321,8 @@ public class CarService {
                 if (mc.getMinAmount() != null && mc.getMinAmount().compareTo(BigDecimal.ZERO) > 0) {
                     minDays = (int) Math.ceil(mc.getMinAmount().doubleValue() / dailyPrice.doubleValue());
                     if (minDays < 1) minDays = 1;
-                    if (minDays > MAX_RENT_DAYS) return null; // 20 天内凑不到门槛，列表不展示
+                    // 车辆最大租期内凑不到门槛则列表不展示券后价
+                    if (minDays > maxDays) return null;
                 }
                 // 每天摊销的优惠额
                 BigDecimal perDayDiscount = value.divide(BigDecimal.valueOf(minDays), 2, RoundingMode.HALF_UP);

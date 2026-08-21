@@ -30,8 +30,6 @@ public class CartService {
     private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    /** 单次每车最大租期（前后端双校验，加强保障） */
-    private static final int MAX_RENT_DAYS = 20;
 
     /**
      * 获取当前会员的购物车列表
@@ -68,9 +66,10 @@ public class CartService {
         if (car == null) {
             throw new BusinessException("车辆不存在");
         }
-        // 校验租期上限（前后端双校验）
-        if (dto.getDays() != null && dto.getDays() > MAX_RENT_DAYS) {
-            throw new BusinessException("单次每车最多租 " + MAX_RENT_DAYS + " 天");
+        // 校验最大租期（车辆级 maxRentDays，null 不限；前后端双校验）
+        Integer maxDays = carService.resolveMaxRentDays(car);
+        if (maxDays != null && dto.getDays() != null && dto.getDays() > maxDays) {
+            throw new BusinessException("车辆「" + car.getName() + "」单次最多租 " + maxDays + " 天");
         }
         // 校验最小起租天数（车辆级 minRentDays 与券后价 couponMinDays 取最大值，前后端双校验）
         Integer minDays = carService.resolveMinRentDays(car);
@@ -124,9 +123,11 @@ public class CartService {
         if (!memberId.equals(cart.getMemberId())) {
             throw new BusinessException(403, "无权操作");
         }
-        // 校验租期上限（前后端双校验）
-        if (dto.getDays() != null && dto.getDays() > MAX_RENT_DAYS) {
-            throw new BusinessException("单次每车最多租 " + MAX_RENT_DAYS + " 天");
+        // 校验最大租期（车辆级 maxRentDays，null 不限；前后端双校验）
+        Car car = carService.getCarEntityById(cart.getCarId());
+        Integer maxDays = car != null ? carService.resolveMaxRentDays(car) : null;
+        if (maxDays != null && dto.getDays() != null && dto.getDays() > maxDays) {
+            throw new BusinessException("车辆「" + (car != null ? car.getName() : "") + "」单次最多租 " + maxDays + " 天");
         }
         if (dto.getStartDate() != null) cart.setStartDate(parseDate(dto.getStartDate()));
         if (dto.getEndDate() != null) cart.setEndDate(parseDate(dto.getEndDate()));

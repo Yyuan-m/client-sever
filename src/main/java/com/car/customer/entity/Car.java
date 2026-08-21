@@ -15,8 +15,8 @@ import java.util.List;
 
 /**
  * 车辆实体（数据来源于 car_rental.car_info 表）
- * typeName / statusName / cover / year / rating / rentalCount 在 car_info 中不存在，
- * 由 Mapper 的 @Select 查询或 Service 层补充。
+ * cover / year / rating / rentCount / rentDays 由 Mapper 的 @Select 查询补充，
+ * rentCount（已租次数）/ rentDays（累计已租天数）由 SQL 实时统计 customer_order 得出。
  */
 @Data
 @TableName("car_rental.car_info")
@@ -38,6 +38,9 @@ public class Car {
 
     /** 最小起租天数（车辆级硬性限制，默认 1） */
     private Integer minRentDays;
+
+    /** 最大租期天数（车辆级，car_info.max_rent_days；null 表示不限租期） */
+    private Integer maxRentDays;
 
     /** 周租折扣系数（7-29 天适用，如 0.92 表示 92% 价格） */
     private BigDecimal weeklyDiscount;
@@ -75,9 +78,19 @@ public class Car {
     @TableField(exist = false)
     private BigDecimal rating;
 
-    /** car_info 无此字段，固定 0 */
+    /**
+     * 已租次数（该车辆 status 为 renting/completed 的订单数）
+     * car_info.rent_count 字段，由 SQL 实时统计，前端展示"已租X次"
+     */
     @TableField(exist = false)
-    private Integer rentalCount;
+    private Integer rentCount;
+
+    /**
+     * 累计已租天数（该车辆所有 renting/completed 订单 days 之和）
+     * car_info.rent_days 字段，由 SQL 实时统计
+     */
+    @TableField(exist = false)
+    private Integer rentDays;
 
     private String description;
 

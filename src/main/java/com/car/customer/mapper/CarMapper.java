@@ -44,6 +44,7 @@ public interface CarMapper extends BaseMapper<Car> {
                 END AS type_name,
                 ci.daily_price,
                 ci.min_rent_days,
+                ci.max_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,
@@ -66,7 +67,13 @@ public interface CarMapper extends BaseMapper<Car> {
                 ci.images,
                 ci.tags, ci.is_hot, ci.is_recommend, ci.seats, ci.displacement, ci.color,
                 YEAR(ci.registration_date) AS year, ci.mileage, ci.description,
-                5.0 AS rating, 0 AS rental_count
+                5.0 AS rating,
+                -- 已租次数：status 为 renting/completed 的订单数
+                (SELECT COUNT(*) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')) AS rent_count,
+                -- 累计已租天数：所有 renting/completed 订单 days 之和（无订单时为 0）
+                COALESCE((SELECT SUM(co.days) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')), 0) AS rent_days
             FROM car_rental.car_info ci
             WHERE ci.is_delete = 0
             <if test="type != null and type != '' and type != 'all'">
@@ -143,6 +150,7 @@ public interface CarMapper extends BaseMapper<Car> {
                 END AS type_name,
                 ci.daily_price,
                 ci.min_rent_days,
+                ci.max_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,
@@ -165,7 +173,13 @@ public interface CarMapper extends BaseMapper<Car> {
                 ci.images,
                 ci.tags, ci.is_hot, ci.is_recommend, ci.seats, ci.displacement, ci.color,
                 YEAR(ci.registration_date) AS year, ci.mileage, ci.description,
-                5.0 AS rating, 0 AS rental_count
+                5.0 AS rating,
+                -- 已租次数：status 为 renting/completed 的订单数
+                (SELECT COUNT(*) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')) AS rent_count,
+                -- 累计已租天数：所有 renting/completed 订单 days 之和（无订单时为 0）
+                COALESCE((SELECT SUM(co.days) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')), 0) AS rent_days
             FROM car_rental.car_info ci
             WHERE ci.is_recommend = 1 AND ci.is_delete = 0
             ORDER BY ci.is_hot DESC, ci.id
@@ -197,6 +211,7 @@ public interface CarMapper extends BaseMapper<Car> {
                 END AS type_name,
                 ci.daily_price,
                 ci.min_rent_days,
+                ci.max_rent_days,
                 ci.weekly_discount,
                 ci.monthly_discount,
                 ci.holiday_surcharge,
@@ -219,7 +234,13 @@ public interface CarMapper extends BaseMapper<Car> {
                 ci.images,
                 ci.tags, ci.is_hot, ci.is_recommend, ci.seats, ci.displacement, ci.color,
                 YEAR(ci.registration_date) AS year, ci.mileage, ci.description,
-                5.0 AS rating, 0 AS rental_count
+                5.0 AS rating,
+                -- 已租次数：status 为 renting/completed 的订单数
+                (SELECT COUNT(*) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')) AS rent_count,
+                -- 累计已租天数：所有 renting/completed 订单 days 之和（无订单时为 0）
+                COALESCE((SELECT SUM(co.days) FROM car_rental.customer_order co
+                    WHERE co.car_id = ci.id AND co.is_delete = 0 AND co.status IN ('renting','completed')), 0) AS rent_days
             FROM car_rental.car_info ci
             WHERE ci.id = #{id} AND ci.is_delete = 0
             """)
