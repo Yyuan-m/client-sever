@@ -50,6 +50,24 @@ public class OrderController {
     }
 
     /**
+     * 批量支付（多车合并结算）：一次性支付同一批次创建的多个待支付订单
+     * 请求体 { "orderIds": [1, 2, 3] }
+     */
+    @PutMapping("/pay-batch")
+    @SuppressWarnings("unchecked")
+    public Result<Void> payBatch(@RequestBody Map<String, Object> body) {
+        Object raw = body.get("orderIds");
+        if (raw == null) {
+            throw new com.car.customer.common.exception.BusinessException("缺少订单ID");
+        }
+        List<Long> orderIds = ((List<Object>) raw).stream()
+                .map(o -> Long.valueOf(o.toString()))
+                .toList();
+        orderService.payOrderBatch(orderIds);
+        return Result.ok();
+    }
+
+    /**
      * 确认还车：renting → completed，并置评价状态为待评价
      * 用户在订单详情页主动点击"确认还车"触发（到期也会自动完成，此为提前还车入口）
      */

@@ -6,8 +6,10 @@ import com.car.customer.common.exception.BusinessException;
 import com.car.customer.common.util.JwtUtil;
 import com.car.customer.common.util.SecurityUtil;
 import com.car.customer.entity.Member;
+import com.car.customer.entity.RentalOrder;
 import com.car.customer.entity.SmsCode;
 import com.car.customer.mapper.MemberMapper;
+import com.car.customer.mapper.RentalOrderMapper;
 import com.car.customer.mapper.SmsCodeMapper;
 import com.car.customer.module.auth.dto.ForgotPasswordDTO;
 import com.car.customer.module.auth.dto.LoginDTO;
@@ -22,7 +24,10 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Objects;
 
 @Slf4j
 @Service
@@ -31,6 +36,7 @@ public class AuthService {
 
     private final MemberMapper memberMapper;
     private final SmsCodeMapper smsCodeMapper;
+    private final RentalOrderMapper rentalOrderMapper;
     private final JwtUtil jwtUtil;
     private final RedisTemplate<String, Object> redisTemplate;
 
@@ -219,17 +225,48 @@ public class AuthService {
         vo.setCreditScore(member.getCreditScore());
         vo.setTotalOrders(member.getTotalOrders());
         vo.setTotalSpent(member.getTotalSpent());
+        // 租车订单数 & 累计消费：实时从订单表统计（覆盖 member 表冗余值）
+        fillOrderStats(member.getId(), vo);
         vo.setRealName(member.getRealName());
         vo.setGender(member.getGender());
         vo.setBirthday(member.getBirthday());
         vo.setIdCard(member.getIdCard());
+        vo.setIdCardFrontImg(member.getIdCardFrontImg());
+        vo.setIdCardBackImg(member.getIdCardBackImg());
         vo.setDriverLicenseNo(member.getDriverLicenseNo());
         vo.setDriverLicenseType(member.getDriverLicenseType());
+        vo.setDriverLicenseFrontImg(member.getDriverLicenseFrontImg());
+        vo.setDriverLicenseBackImg(member.getDriverLicenseBackImg());
         vo.setDriverLicenseExpireDate(member.getDriverLicenseExpireDate());
         vo.setProvince(member.getProvince());
         vo.setCity(member.getCity());
         vo.setAddress(member.getAddress());
         vo.setLastLoginTime(member.getLastLoginTime());
+        vo.setVerifyStatus(member.getVerifyStatus() != null ? member.getVerifyStatus() : "unverified");
+        vo.setVerifyRejectReason(member.getVerifyRejectReason());
+        vo.setVerifySubmitTime(member.getVerifySubmitTime());
         return vo;
+    }
+
+    /**
+     * 从订单表实时统计会员的租车订单数 & 累计消费：
+     * - 租车订单数：该会员全部订单数（含待支付/租赁中/已完成/已取消，不含逻辑删除）
+     * - 已完成订单数：仅 status=completed，与后台会员等级计算口径一致
+     * - 累计消费：仅 status=completed（已完成）订单的 totalAmount 之和
+     */
+    private void fillOrderStats(Long memberId, MemberVO vo) {
+        Long orderCount = rentalOrderMapper.selectCount(new LambdaQueryWrapper<RentalOrder>()
+                .eq(RentalOrder::getMemberId, memberId));
+        vo.setTotalOrders(orderCount == null ? 0 : orderCount.intValue());
+
+        List<RentalOrder> completedOrders = rentalOrderMapper.selectList(new LambdaQueryWrapper<RentalOrder>()
+                .eq(RentalOrder::getMemberId, memberId)
+                .eq(RentalOrder::getStatus, "completed"));
+        vo.setCompletedOrders(completedOrders.size());
+        BigDecimal totalSpent = completedOrders.stream()
+                .map(RentalOrder::getTotalAmount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        vo.setTotalSpent(totalSpent);
     }
 }

@@ -77,6 +77,8 @@ public class SystemService {
         result.putIfAbsent("siteSubtitle", "豪华汽车租赁");
         result.putIfAbsent("siteName", "LUXURY CAR");
         result.putIfAbsent("phone", "400-888-8888");
+        // 双端兼容：移动端读 hotline、web 端读 phone，两字段同值输出
+        result.put("hotline", result.get("phone"));
 
         return result;
     }

@@ -6,6 +6,7 @@ import com.car.customer.module.auth.vo.MemberVO;
 import com.car.customer.module.upload.service.UploadService;
 import com.car.customer.module.user.dto.ChangePasswordDTO;
 import com.car.customer.module.user.dto.ProfileDTO;
+import com.car.customer.module.user.dto.VerifySubmitDTO;
 import com.car.customer.module.user.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,12 @@ public class UserController {
     @PutMapping("/profile")
     public Result<MemberVO> updateProfile(@RequestBody ProfileDTO dto) {
         return Result.ok(userService.updateProfile(dto));
+    }
+
+    /** 提交实名认证（进入人工审核流程） */
+    @PostMapping("/verify")
+    public Result<MemberVO> submitVerify(@RequestBody VerifySubmitDTO dto) {
+        return Result.ok(userService.submitVerify(dto));
     }
 
     @PostMapping("/avatar")

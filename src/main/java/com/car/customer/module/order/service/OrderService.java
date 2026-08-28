@@ -8,10 +8,14 @@ import com.car.customer.common.exception.BusinessException;
 import com.car.customer.common.result.PageResult;
 import com.car.customer.common.util.SecurityUtil;
 import com.car.customer.entity.Car;
+import com.car.customer.entity.Member;
 import com.car.customer.entity.MemberCoupon;
+import com.car.customer.entity.OrderItem;
 import com.car.customer.entity.RentalOrder;
 import com.car.customer.mapper.CouponMapper;
 import com.car.customer.mapper.MemberCouponMapper;
+import com.car.customer.mapper.MemberMapper;
+import com.car.customer.mapper.OrderItemMapper;
 import com.car.customer.mapper.RentalOrderMapper;
 import com.car.customer.module.car.service.CarService;
 import com.car.customer.module.coupon.service.CouponService;
@@ -27,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,29 +42,33 @@ import java.util.Map;
 public class OrderService {
 
     private final RentalOrderMapper orderMapper;
+    private final OrderItemMapper orderItemMapper;
     private final CarService carService;
     private final MemberCouponMapper memberCouponMapper;
     private final CouponMapper couponMapper;
     private final CouponService couponService;
     private final PriceService priceService;
+    private final MemberMapper memberMapper;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     /** 待支付订单超时时间（分钟），超时自动取消 */
     private static final int PAY_TIMEOUT_MINUTES = 5;
 
     /**
-     * 创建订单（购物车每个车辆生成独立订单）
-     * 优惠券联动（v3 支持多张可叠加券）：下单时批量锁定券（unused → locked），应用到首个订单；失败回滚
-     * 返回 {id: 首个订单id, orderNo: 首个订单号, count: 订单总数, couponDiscount: 优惠金额}
+     * 创建订单（一个订单可包含多辆车）
+     * 优惠券联动（v3 支持多张可叠加券）：下单时批量锁定券（unused → locked），应用到一个主订单；失败回滚
+     * 返回 {id: 主订单id, orderNo: 订单号, count: 车辆数, couponDiscount: 优惠金额}
      */
     @Transactional
     public Map<String, Object> createOrder(CreateOrderDTO dto) {
         Long memberId = SecurityUtil.getCurrentMemberId();
-        Long firstId = null;
-        String firstOrderNo = null;
-        RentalOrder firstOrder = null;
         BigDecimal rentAmountTotal = BigDecimal.ZERO;
-        int count = 0;
+
+        // 实名认证校验：未完成实名与驾驶证信息认证的会员不允许下单租车（未认证/审核中/已驳回均拦截）
+        Member member = memberMapper.selectById(memberId);
+        if (member == null || !"verified".equals(member.getVerifyStatus())) {
+            throw new BusinessException("请先完成实名与驾驶证信息认证后再下单租车");
+        }
 
         // 0. 解析使用的券ID列表（兼容旧字段 couponUserId）
         List<Long> couponUserIds = new java.util.ArrayList<>();
@@ -81,6 +90,10 @@ public class OrderService {
         }
 
         try {
+            // 预校验所有车辆并计算每车价格（在创建订单前，保证任一车辆非法则整体回滚）
+            List<OrderItem> itemsToInsert = new ArrayList<>();
+            String orderNo = generateOrderNo();
+
             for (CreateOrderDTO.CartItemDTO item : dto.getItems()) {
                 // 校验车辆状态
                 Car car = carService.getCarEntityById(item.getCarId());
@@ -101,61 +114,91 @@ public class OrderService {
                     throw new BusinessException("车辆「" + car.getName() + "」需至少租 " + minDays + " 天起");
                 }
 
-                RentalOrder order = new RentalOrder();
-                order.setOrderNo(generateOrderNo());
-                order.setMemberId(memberId);
-                order.setCarId(item.getCarId());
-                order.setCarName(car.getName());
-                order.setCarCover(car.getCover());
-                order.setStatus("pending");
-                order.setStatusName("待支付");
                 LocalDate startDate = LocalDate.parse(item.getStartDate(), DATE_FMT);
                 LocalDate endDate = LocalDate.parse(item.getEndDate(), DATE_FMT);
-                order.setStartDate(startDate);
-                order.setEndDate(endDate);
-                order.setDays(item.getDays());
-                order.setDailyPrice(car.getDailyPrice());
-
                 // 使用 PriceService 统一计算价格（与前端展示完全一致）
                 PriceDetailVO price = priceService.calculate(car, startDate, endDate);
                 BigDecimal rentAmount = price.getRentAmount();
-                order.setRentAmount(rentAmount);
-                order.setCouponDiscount(BigDecimal.ZERO);
-                order.setTotalAmount(rentAmount);
-                order.setCity(dto.getCity());
-                order.setStore(dto.getStore());
-                order.setContactName(dto.getName());
-                order.setContactPhone(dto.getPhone());
 
-                orderMapper.insert(order);
-                count++;
+                // 构建订单明细（一车一条）
+                OrderItem oi = new OrderItem();
+                oi.setCarId(item.getCarId());
+                oi.setCarName(car.getName());
+                oi.setCarCover(car.getCover());
+                oi.setStartDate(startDate);
+                oi.setEndDate(endDate);
+                oi.setDays(item.getDays());
+                oi.setDailyPrice(car.getDailyPrice());
+                oi.setRentAmount(rentAmount);
+                oi.setDiscountAmount(BigDecimal.ZERO);
+                oi.setTotalAmount(rentAmount);
+                itemsToInsert.add(oi);
                 rentAmountTotal = rentAmountTotal.add(rentAmount);
-                if (firstId == null) {
-                    firstId = order.getId();
-                    firstOrderNo = order.getOrderNo();
-                    firstOrder = order;
-                }
             }
 
-            // 2. 优惠券抵扣计算（v3 批量叠加，应用到首个订单）
+            // 创建主订单：以首车冗余字段作为主订单车辆信息（兼容列表/首页/库存/评价）
+            CreateOrderDTO.CartItemDTO firstItem = dto.getItems().get(0);
+            LocalDate firstStart = LocalDate.parse(firstItem.getStartDate(), DATE_FMT);
+            LocalDate firstEnd = LocalDate.parse(firstItem.getEndDate(), DATE_FMT);
+            Car firstCar = carService.getCarEntityById(firstItem.getCarId());
+
+            RentalOrder order = new RentalOrder();
+            order.setOrderNo(orderNo);
+            order.setMemberId(memberId);
+            order.setCarId(firstCar.getId());
+            order.setCarName(firstCar.getName());
+            order.setCarCover(firstCar.getCover());
+            order.setStatus("pending");
+            order.setStatusName("待支付");
+            order.setStartDate(firstStart);
+            order.setEndDate(firstEnd);
+            order.setDays(firstItem.getDays());
+            order.setDailyPrice(firstCar.getDailyPrice());
+            order.setRentAmount(rentAmountTotal);
+            order.setCouponDiscount(BigDecimal.ZERO);
+            order.setTotalAmount(rentAmountTotal);
+            order.setCity(dto.getCity());
+            order.setStore(dto.getStore());
+            order.setContactName(dto.getName());
+            order.setContactPhone(dto.getPhone());
+            orderMapper.insert(order);
+
+            // 写入订单明细（关联主订单ID）
+            for (OrderItem oi : itemsToInsert) {
+                oi.setOrderId(order.getId());
+                orderItemMapper.insert(oi);
+            }
+
+            // 优惠券抵扣计算（v3 批量叠加），应用到主订单
             BigDecimal couponDiscount = BigDecimal.ZERO;
-            if (!couponUserIds.isEmpty() && firstOrder != null) {
+            if (!couponUserIds.isEmpty()) {
                 couponDiscount = couponService.calculateDiscountForOrderBatch(couponUserIds, rentAmountTotal);
                 if (couponDiscount.compareTo(BigDecimal.ZERO) > 0) {
-                    BigDecimal actualDiscount = couponDiscount.min(firstOrder.getTotalAmount());
-                    firstOrder.setCouponDiscount(actualDiscount);
-                    firstOrder.setTotalAmount(firstOrder.getTotalAmount().subtract(actualDiscount));
+                    BigDecimal actualDiscount = couponDiscount.min(order.getTotalAmount());
+                    order.setCouponDiscount(actualDiscount);
+                    order.setTotalAmount(order.getTotalAmount().subtract(actualDiscount));
                     // v3：多张券 ID 逗号分隔存储
-                    firstOrder.setCouponUserId(joinIds(couponUserIds));
-                    orderMapper.updateById(firstOrder);
+                    order.setCouponUserId(joinIds(couponUserIds));
+                    orderMapper.updateById(order);
+                    // 优惠按每车租金占比分摊到明细（前端可逐车展示）
+                    for (OrderItem oi : itemsToInsert) {
+                        BigDecimal share = rentAmountTotal.compareTo(BigDecimal.ZERO) <= 0
+                                ? BigDecimal.ZERO
+                                : actualDiscount.multiply(oi.getRentAmount())
+                                        .divide(rentAmountTotal, 2, java.math.RoundingMode.HALF_UP);
+                        oi.setDiscountAmount(share);
+                        oi.setTotalAmount(oi.getRentAmount().subtract(share));
+                        orderItemMapper.updateById(oi);
+                    }
                 }
             }
 
             Map<String, Object> result = new HashMap<>();
-            result.put("id", firstId);
-            result.put("orderNo", firstOrderNo);
-            result.put("count", count);
+            result.put("id", order.getId());
+            result.put("orderNo", orderNo);
+            result.put("count", itemsToInsert.size());
             result.put("couponDiscount", couponDiscount);
+            result.put("orderIds", java.util.List.of(order.getId()));
             return result;
         } catch (RuntimeException e) {
             // 下单失败：回滚优惠券锁定（批量）
@@ -220,7 +263,37 @@ public class OrderService {
         }
         fillCouponName(order);
         normalizeOrderImage(order);
+        // 填充订单车辆明细（多车订单详情展示；无明细时使用主订单首车字段）
+        order.setItems(loadOrderItems(id));
         return order;
+    }
+
+    /**
+     * 加载订单的车俩明细
+     * 明细表为空（历史异常数据）时降级返回 null，前端回退使用主订单首车字段
+     */
+    private List<OrderItem> loadOrderItems(Long orderId) {
+        List<OrderItem> list = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
+                .eq(OrderItem::getOrderId, orderId)
+                .orderByAsc(OrderItem::getId));
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        // 规范化封面 URL
+        list.forEach(this::normalizeOrderImage);
+        return list;
+    }
+
+    /** 规范化订单明细的封面 URL（与主订单同样的历史兼容逻辑） */
+    private void normalizeOrderImage(OrderItem item) {
+        if (item == null) return;
+        String cover = item.getCarCover();
+        if (cover == null || cover.isBlank()) return;
+        if (!cover.startsWith("http://") && !cover.startsWith("https://")) return;
+        int idx = cover.indexOf("/uploads");
+        if (idx >= 0) {
+            item.setCarCover(cover.substring(idx));
+        }
     }
 
     /**
@@ -321,6 +394,54 @@ public class OrderService {
     }
 
     /**
+     * 批量支付订单：一次结算多车的合并支付场景
+     * 将同一批次创建的多个待支付订单一次性全部置为租赁中。
+     * 优惠券只挂在首个订单上（createOrder 时统一应用），核销时对首个订单执行一次即可。
+     */
+    @Transactional
+    public void payOrderBatch(List<Long> orderIds) {
+        autoCancelExpiredOrders();
+        if (orderIds == null || orderIds.isEmpty()) {
+            throw new BusinessException("缺少订单ID");
+        }
+        Long memberId = SecurityUtil.getCurrentMemberId();
+        RentalOrder firstOrder = null;
+        for (Long id : orderIds) {
+            RentalOrder order = orderMapper.selectById(id);
+            if (order == null) {
+                throw new BusinessException("订单不存在: " + id);
+            }
+            if (!memberId.equals(order.getMemberId())) {
+                throw new BusinessException(403, "无权操作该订单");
+            }
+            String status = order.getStatus();
+            if ("cancelled".equals(status)) {
+                throw new BusinessException("订单「" + order.getOrderNo() + "」已超时自动取消，无法支付");
+            }
+            if ("renting".equals(status) || "completed".equals(status)) {
+                throw new BusinessException("订单「" + order.getOrderNo() + "」已支付，无需重复支付");
+            }
+            if (!"pending".equals(status)) {
+                throw new BusinessException("订单「" + order.getOrderNo() + "」当前状态无法支付");
+            }
+            order.setStatus("renting");
+            order.setStatusName("租赁中");
+            orderMapper.updateById(order);
+            // 记录首个订单（优惠券挂在首个订单上，只需核销一次）
+            if (firstOrder == null) {
+                firstOrder = order;
+            }
+        }
+        // 优惠券核销：只有首个订单持有 couponUserId，对首个订单执行一次批量核销
+        if (firstOrder != null) {
+            List<Long> couponIds = parseIds(firstOrder.getCouponUserId());
+            if (!couponIds.isEmpty()) {
+                couponService.verifyForOrderBatch(couponIds, memberId, firstOrder.getId());
+            }
+        }
+    }
+
+    /**
      * 确认还车（手动完成订单）：renting → completed，并初始化评价状态为待评价
      * 用户在订单详情页主动点击"确认还车"触发；车辆 car_info.status 不在此维护（保持现状，由后台管理）
      */
@@ -343,6 +464,8 @@ public class OrderService {
         order.setReviewStatus("unreviewed");
         order.setReviewStatusName("待评价");
         orderMapper.updateById(order);
+        // 订单完成 → 重算会员等级（与后台管理服务同一套规则）
+        memberMapper.recalcMemberLevel(order.getMemberId());
     }
 
     /**
@@ -397,6 +520,8 @@ public class OrderService {
             order.setReviewStatus("unreviewed");
             order.setReviewStatusName("待评价");
             orderMapper.updateById(order);
+            // 订单完成 → 重算会员等级（与后台管理服务同一套规则）
+            memberMapper.recalcMemberLevel(order.getMemberId());
             log.info("订单到期自动完成: orderNo={}, endDate={}", order.getOrderNo(), order.getEndDate());
         }
     }

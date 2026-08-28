@@ -48,6 +48,13 @@ public class Member {
     private String lastLoginIp;
     private Integer status;
 
+    /** 实名认证状态: unverified未认证/pending审核中/verified已认证/rejected已驳回 */
+    private String verifyStatus;
+    /** 最近一次认证驳回原因 */
+    private String verifyRejectReason;
+    /** 最近一次提交认证时间 */
+    private LocalDateTime verifySubmitTime;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

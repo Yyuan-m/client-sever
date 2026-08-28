@@ -43,6 +43,7 @@ public class CarService {
     private final CouponMapper couponMapper;
     private final MemberCouponMapper memberCouponMapper;
     private final RentalOrderMapper rentalOrderMapper;
+    private final OrderItemMapper orderItemMapper;
 
     /** 车辆整备天数：当前订单到期日后预留 N 天方可再次起租 */
     private static final int PREP_DAYS = 2;
@@ -367,22 +368,24 @@ public class CarService {
                 .filter(c -> "maintenance".equals(c.getStatus()))
                 .forEach(c -> c.setRentReason("车辆维修保养中"));
 
-        // 2) 一次性查询所有车辆的占用订单（pending/renting）
+        // 2) 一次性查询所有被占用车辆（pending/renting）的订单明细
+        // 一个订单可含多辆车，占用判断基于 customer_order_item 明细表，
+        // 通过主订单状态过滤（同一订单首车冗余在主订单，明细表中同含首车）
         List<Long> carIds = cars.stream()
                 .map(Car::getId)
                 .filter(Objects::nonNull)
                 .toList();
         if (carIds.isEmpty()) return;
-        List<RentalOrder> allOccupied = rentalOrderMapper.selectList(new LambdaQueryWrapper<RentalOrder>()
-                .in(RentalOrder::getCarId, carIds)
-                .in(RentalOrder::getStatus, OCCUPIED_STATUSES));
+        List<OrderItem> allOccupied = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
+                .in(OrderItem::getCarId, carIds)
+                .in(OrderItem::getOrderId, occupiedOrderIds()));
         // 按车分组
-        Map<Long, List<RentalOrder>> byCar = allOccupied.stream()
-                .collect(Collectors.groupingBy(RentalOrder::getCarId));
+        Map<Long, List<OrderItem>> byCar = allOccupied.stream()
+                .collect(Collectors.groupingBy(OrderItem::getCarId));
 
         LocalDate today = LocalDate.now();
         for (Car car : cars) {
-            List<RentalOrder> occupied = byCar.get(car.getId());
+            List<OrderItem> occupied = byCar.get(car.getId());
             if (occupied == null || occupied.isEmpty()) continue;
 
             // 有占用订单：强制标记为已出租（覆盖 car_info.status 可能不准的情况）
@@ -390,12 +393,13 @@ public class CarService {
             car.setStatusName("已出租");
 
             // 原因：优先"租赁中"（renting），其次"已被预约"（pending）
-            boolean hasRenting = occupied.stream().anyMatch(o -> "renting".equals(o.getStatus()));
+            RentalOrder firstOcc = rentalOrderMapper.selectById(occupied.get(0).getOrderId());
+            boolean hasRenting = firstOcc != null && "renting".equals(firstOcc.getStatus());
             car.setRentReason(hasRenting ? "车辆租赁中" : "已被预约");
 
             // 最早可租日：最大到期日 + 整备期
             LocalDate maxEnd = occupied.stream()
-                    .map(RentalOrder::getEndDate)
+                    .map(OrderItem::getEndDate)
                     .filter(Objects::nonNull)
                     .max(LocalDate::compareTo)
                     .orElse(null);
@@ -406,6 +410,18 @@ public class CarService {
             }
             car.setAvailableDate(available);
         }
+    }
+
+    /**
+     * 查询当前处于"占用中"状态（pending/renting）的订单 ID 集合
+     * 用于明细表占用判断，避免直接在主订单上按首车判断导致遗漏订单内其他车辆
+     */
+    private java.util.Set<Long> occupiedOrderIds() {
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        List<RentalOrder> orders = rentalOrderMapper.selectList(new LambdaQueryWrapper<RentalOrder>()
+                .in(RentalOrder::getStatus, OCCUPIED_STATUSES));
+        orders.forEach(o -> ids.add(o.getId()));
+        return ids;
     }
 
     private CarConfig emptyConfig() {

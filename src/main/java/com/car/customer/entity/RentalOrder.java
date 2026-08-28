@@ -11,6 +11,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @TableName("car_rental.customer_order")
@@ -38,9 +39,20 @@ public class RentalOrder {
      * 旧数据为单 ID（bigint 已迁移为 varchar），兼容读取
      */
     private String couponUserId;
-    /** 优惠券名称（订单展示用，从 coupon 表 JOIN 得到，非持久化，多张用顿号分隔） */
+    /** 报价对应的车辆信息（列表/首页用主订单冗余字段即可，评价也使用主订单字段） */
+
+    /**
+     * 优惠券名称（订单展示用，从 coupon 表 JOIN 得到，非持久化，多张用顿号分隔）
+     */
     @TableField(exist = false)
     private String couponName;
+
+    /**
+     * 订单车辆明细（多车订单；持久化于 customer_order_item，非主订单字段）
+     * 一订单可包含多辆车，详情页展示；历史一车一单也有一条明细
+     */
+    @TableField(exist = false)
+    private List<OrderItem> items;
     private String city;
     private String store;
     private String contactName;

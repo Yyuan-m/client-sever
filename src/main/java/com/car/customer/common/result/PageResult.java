@@ -29,4 +29,9 @@ public class PageResult<T> implements Serializable {
     public static <T> PageResult<T> of(IPage<T> page) {
         return new PageResult<>(page.getRecords(), page.getTotal(), page.getCurrent(), page.getSize());
     }
+
+    /** 手动组装（记录需转换 VO 时使用） */
+    public static <T> PageResult<T> of(List<T> list, long total, long page, long pageSize) {
+        return new PageResult<>(list, total, page, pageSize);
+    }
 }
