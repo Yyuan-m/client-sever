@@ -56,6 +56,12 @@ public class Coupon {
     /** 每人限领张数 */
     private Integer perUserLimit;
 
+    /** 发放方式 all全量投放（C端可领）/ targeted定向发放（后台指定会员直接到账，不进C端可领列表） */
+    private String grantType;
+
+    /** 目标会员等级（grant_type=level 按会员等级发放时指定，如 normal/diamond，需达到该等级方可领取） */
+    private String targetLevel;
+
     /** 适用范围 all全场通用/specified指定车辆 */
     private String applyScope;
 

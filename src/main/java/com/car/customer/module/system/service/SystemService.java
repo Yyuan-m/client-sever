@@ -52,6 +52,7 @@ public class SystemService {
             if (value == null) continue;
             switch (key) {
                 case "site_name" -> result.put("siteName", value);
+                case "site_subtitle" -> result.put("siteSubtitle", value);
                 case "contact_phone", "hotline" -> {
                     // 优先 contact_phone，兜底 hotline
                     result.putIfAbsent("phone", value);
@@ -74,7 +75,7 @@ public class SystemService {
         result.put("rentRules", rentRules);
 
         // 前端 footer 用到 siteSubtitle，sys_config 无此 key，用默认值
-        result.putIfAbsent("siteSubtitle", "豪华汽车租赁");
+        result.putIfAbsent("siteSubtitle", "大圣玩车");
         result.putIfAbsent("siteName", "LUXURY CAR");
         result.putIfAbsent("phone", "400-888-8888");
         // 双端兼容：移动端读 hotline、web 端读 phone，两字段同值输出

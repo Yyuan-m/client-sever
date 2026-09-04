@@ -5,6 +5,7 @@ import com.car.customer.common.result.Result;
 import com.car.customer.module.feedback.dto.FeedbackDTO;
 import com.car.customer.module.feedback.service.FeedbackService;
 import com.car.customer.module.feedback.vo.AppointmentVO;
+import com.car.customer.module.feedback.vo.ContactInfoVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -23,13 +24,14 @@ public class FeedbackController {
         return Result.ok();
     }
 
-    /** 我的预约列表（分页 + 状态筛选，需登录） */
+    /** 我的预约/留言列表（分页 + 状态筛选 + 类型筛选，需登录） */
     @GetMapping("/appointments")
     public Result<PageResult<AppointmentVO>> myAppointments(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize,
-            @RequestParam(required = false) String status) {
-        return Result.ok(feedbackService.getMyAppointments(page, pageSize, status));
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String type) {
+        return Result.ok(feedbackService.getMyAppointments(page, pageSize, status, type));
     }
 
     /** 取消预约（仅待处理/已确认状态，需登录） */
@@ -37,5 +39,11 @@ public class FeedbackController {
     public Result<Void> cancel(@PathVariable Long id) {
         feedbackService.cancelAppointment(id);
         return Result.ok();
+    }
+
+    /** 查看联系人完整信息（仅本人可查，未脱敏，需登录） */
+    @GetMapping("/appointments/{id}/contact")
+    public Result<ContactInfoVO> contact(@PathVariable Long id) {
+        return Result.ok(feedbackService.getContactInfo(id));
     }
 }

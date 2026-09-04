@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.car.customer.common.exception.BusinessException;
 import com.car.customer.common.util.SecurityUtil;
 import com.car.customer.entity.Coupon;
+import com.car.customer.entity.Member;
 import com.car.customer.entity.MemberCoupon;
 import com.car.customer.mapper.CouponMapper;
 import com.car.customer.mapper.MemberCouponMapper;
+import com.car.customer.mapper.MemberMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,7 @@ public class CouponService {
 
     private final CouponMapper couponMapper;
     private final MemberCouponMapper memberCouponMapper;
+    private final MemberMapper memberMapper;
 
     /**
      * 可领券列表（已投放 + 有效期内 + 有库存）
@@ -49,6 +52,8 @@ public class CouponService {
         LambdaQueryWrapper<Coupon> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Coupon::getStatus, "published")
                 .eq(Coupon::getPublished, 1)
+                // 直接发放(user)到用户账户的券不进C端可领列表；仅展示需自助领取的 all(全量)/level(会员等级) 券
+                .and(w -> w.ne(Coupon::getGrantType, "user").or().isNull(Coupon::getGrantType))
                 .le(Coupon::getValidStartTime, now)
                 .gt(Coupon::getValidEndTime, now)
                 .orderByDesc(Coupon::getCreatedAt);
@@ -142,6 +147,19 @@ public class CouponService {
         }
         if (!"published".equals(coupon.getStatus()) || coupon.getPublished() == null || coupon.getPublished() != 1) {
             throw new BusinessException("优惠券未投放，不可领取");
+        }
+        // 发放类型校验：user/targeted 直接发放进账户，不支持自助领取；level 需满足会员等级
+        String grantType = coupon.getGrantType();
+        if ("user".equals(grantType) || "targeted".equals(grantType)) {
+            throw new BusinessException("该优惠券为直接发放，不支持自助领取");
+        }
+        if ("level".equals(grantType)) {
+            Member member = memberMapper.selectById(memberId);
+            String memberLevel = member == null ? null : member.getLevel();
+            // 等级券精确匹配目标等级：仅目标等级会员可领
+            if (coupon.getTargetLevel() == null || !coupon.getTargetLevel().equals(memberLevel)) {
+                throw new BusinessException("该优惠券仅限指定会员等级领取");
+            }
         }
         LocalDateTime now = LocalDateTime.now();
         if (coupon.getValidStartTime() != null && coupon.getValidStartTime().isAfter(now)) {

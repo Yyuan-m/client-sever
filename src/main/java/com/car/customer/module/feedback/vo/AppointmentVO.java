@@ -13,6 +13,15 @@ public class AppointmentVO {
 
     private Long id;
 
+    /**
+     * 类型：appointment 预约咨询 / feedback 留言反馈
+     * （与反馈提交用同一张 feedback 表，通过 type 区分）用于前端类型筛选与徽标展示
+     */
+    private String type;
+
+    /** 类型中文名：预约咨询 / 留言反馈 */
+    private String typeName;
+
     /** 意向车型 */
     private String carType;
 

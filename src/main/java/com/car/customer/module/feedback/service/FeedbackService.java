@@ -9,6 +9,7 @@ import com.car.customer.entity.Feedback;
 import com.car.customer.mapper.FeedbackMapper;
 import com.car.customer.module.feedback.dto.FeedbackDTO;
 import com.car.customer.module.feedback.vo.AppointmentVO;
+import com.car.customer.module.feedback.vo.ContactInfoVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class FeedbackService {
     private static final Set<String> CANCELLABLE_STATUS = Set.of("pending");
 
     private static final String TYPE_APPOINTMENT = "appointment";
+    private static final String TYPE_FEEDBACK = "feedback";
 
     public void submit(FeedbackDTO dto) {
         Feedback fb = new Feedback();
@@ -55,15 +57,20 @@ public class FeedbackService {
     }
 
     /**
-     * 我的预约列表（分页 + 状态筛选）
-     * 仅返回当前登录会员提交的 type=appointment 记录，按提交时间倒序
+     * 我的预约/留言列表（分页 + 状态筛选 + 类型筛选）
+     * 返回当前登录会员提交的预约咨询与留言反馈记录（可按 type 过滤），按提交时间倒序
+     *
+     * @param type 类型筛选：appointment 预约咨询 / feedback 留言反馈 / all 或不传不区分（全部）
      */
-    public PageResult<AppointmentVO> getMyAppointments(int page, int pageSize, String status) {
+    public PageResult<AppointmentVO> getMyAppointments(int page, int pageSize, String status, String type) {
         Long memberId = SecurityUtil.getCurrentMemberId();
+
+        boolean filterType = StringUtils.hasText(type) && !"all".equals(type)
+                && (TYPE_APPOINTMENT.equals(type) || TYPE_FEEDBACK.equals(type));
 
         LambdaQueryWrapper<Feedback> wrapper = new LambdaQueryWrapper<Feedback>()
                 .eq(Feedback::getMemberId, memberId)
-                .eq(Feedback::getType, TYPE_APPOINTMENT)
+                .eq(filterType, Feedback::getType, type)
                 .eq(StringUtils.hasText(status) && APPOINTMENT_STATUS.contains(status),
                         Feedback::getStatus, status)
                 .orderByDesc(Feedback::getCreateTime);
@@ -94,6 +101,22 @@ public class FeedbackService {
         log.info("用户取消预约: id={}, memberId={}", id, memberId);
     }
 
+    /**
+     * 查看预约/留言的联系人完整信息：仅本人可查，返回未脱敏的姓名/手机号
+     */
+    public ContactInfoVO getContactInfo(Long id) {
+        Long memberId = SecurityUtil.getCurrentMemberId();
+        Feedback fb = feedbackMapper.selectById(id);
+        if (fb == null || !memberId.equals(fb.getMemberId())) {
+            throw new BusinessException("记录不存在");
+        }
+        ContactInfoVO vo = new ContactInfoVO();
+        vo.setId(fb.getId());
+        vo.setName(fb.getName());
+        vo.setPhone(fb.getPhone());
+        return vo;
+    }
+
     private AppointmentVO toVO(Feedback fb) {
         AppointmentVO vo = new AppointmentVO();
         vo.setId(fb.getId());
@@ -102,6 +125,8 @@ public class FeedbackService {
         vo.setName(maskName(fb.getName()));
         vo.setPhone(maskPhone(fb.getPhone()));
         vo.setContent(fb.getContent());
+        vo.setType(fb.getType());
+        vo.setTypeName(TYPE_APPOINTMENT.equals(fb.getType()) ? "预约咨询" : "留言反馈");
         vo.setStatus(fb.getStatus());
         vo.setStatusName(statusName(fb.getStatus()));
         vo.setRemark(fb.getRemark());
