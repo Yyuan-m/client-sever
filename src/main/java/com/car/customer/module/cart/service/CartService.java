@@ -76,6 +76,8 @@ public class CartService {
         if (minDays != null && dto.getDays() != null && dto.getDays() < minDays) {
             throw new BusinessException("车辆「" + car.getName() + "」需至少租 " + minDays + " 天起");
         }
+        // 校验可用性：所选租期不能落在已租出/整备期（前后端双校验）
+        carService.validateRentAvailability(dto.getCarId(), parseDate(dto.getStartDate()), parseDate(dto.getEndDate()));
 
         // 检查是否已在购物车
         LambdaQueryWrapper<Cart> wrapper = new LambdaQueryWrapper<Cart>()
@@ -133,6 +135,8 @@ public class CartService {
         if (dto.getEndDate() != null) cart.setEndDate(parseDate(dto.getEndDate()));
         if (dto.getDays() != null) cart.setDays(dto.getDays());
         if (dto.getQuantity() != null) cart.setQuantity(dto.getQuantity());
+        // 校验可用性：改期后的租期不能落在已租出/整备期（前后端双校验）
+        carService.validateRentAvailability(cart.getCarId(), cart.getStartDate(), cart.getEndDate());
         cartMapper.updateById(cart);
         parseTags(cart);
         return cart;

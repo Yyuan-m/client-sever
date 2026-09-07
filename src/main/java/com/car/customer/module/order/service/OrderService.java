@@ -116,6 +116,8 @@ public class OrderService {
 
                 LocalDate startDate = LocalDate.parse(item.getStartDate(), DATE_FMT);
                 LocalDate endDate = LocalDate.parse(item.getEndDate(), DATE_FMT);
+                // 校验可用性：所选租期不能与已租出/整备期冲突（前后端双校验，防止结算绕过购物车限制）
+                carService.validateRentAvailability(item.getCarId(), startDate, endDate);
                 // 使用 PriceService 统一计算价格（与前端展示完全一致）
                 PriceDetailVO price = priceService.calculate(car, startDate, endDate);
                 BigDecimal rentAmount = price.getRentAmount();

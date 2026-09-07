@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/car")
@@ -49,6 +50,16 @@ public class CarController {
     @GetMapping("/hot")
     public Result<List<Car>> hot() {
         return Result.ok(carService.getHotCars());
+    }
+
+    /**
+     * 车辆可用期查询（购物车改期禁用已租出/整备期日期）
+     * @param id 车辆 ID
+     * @return { carId, availableDate, unavailableRanges:[{startDate,endDate}] }
+     */
+    @GetMapping("/{id}/availability")
+    public Result<Map<String, Object>> availability(@PathVariable Long id) {
+        return Result.ok(carService.getAvailability(id));
     }
 
     /**

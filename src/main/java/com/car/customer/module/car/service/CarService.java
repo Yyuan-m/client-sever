@@ -397,14 +397,14 @@ public class CarService {
             boolean hasRenting = firstOcc != null && "renting".equals(firstOcc.getStatus());
             car.setRentReason(hasRenting ? "车辆租赁中" : "已被预约");
 
-            // 最早可租日：最大到期日 + 整备期
+            // 最早可租日：最大还车日 + 整备天数 + 1（如 09-07 还车、整备 2 天 → 09-10 起可租）
             LocalDate maxEnd = occupied.stream()
                     .map(OrderItem::getEndDate)
                     .filter(Objects::nonNull)
                     .max(LocalDate::compareTo)
                     .orElse(null);
             if (maxEnd == null) continue;
-            LocalDate available = maxEnd.plusDays(PREP_DAYS);
+            LocalDate available = maxEnd.plusDays(PREP_DAYS + 1L);
             if (available.isBefore(today)) {
                 available = today;
             }
@@ -422,6 +422,84 @@ public class CarService {
                 .in(RentalOrder::getStatus, OCCUPIED_STATUSES));
         orders.forEach(o -> ids.add(o.getId()));
         return ids;
+    }
+
+    // ============================================================
+    // 车辆可用性（供购物车改期/选期禁用已租出与整备期）
+    // ============================================================
+
+    /**
+     * 查询某车所有占用订单明细（pending/renting 的订单，含该车）
+     */
+    private List<OrderItem> occupiedItemsOf(Long carId) {
+        if (carId == null) return Collections.emptyList();
+        return orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
+                .eq(OrderItem::getCarId, carId)
+                .in(OrderItem::getOrderId, occupiedOrderIds()));
+    }
+
+    /**
+     * 车辆可用期查询（购物车改期弹窗/日历禁用用）
+     * @return { carId, availableDate, unavailableRanges:[{startDate,endDate}] }
+     * unavailableRanges 为闭区间 [startDate, endDate]：租期 [start, end] 再往后加 PREP 天整备期
+     * （如租 09-01 至 09-07、整备 2 天 → 09-01~09-09 均不可选，availableDate=09-10）
+     */
+    public Map<String, Object> getAvailability(Long carId) {
+        Car car = carMapper.selectAdminCarById(carId);
+        if (car == null) {
+            throw new BusinessException("车辆不存在");
+        }
+        List<OrderItem> occupied = occupiedItemsOf(carId);
+        List<Map<String, Object>> ranges = new ArrayList<>();
+        LocalDate today = LocalDate.now();
+        LocalDate maxEnd = null;
+        for (OrderItem it : occupied) {
+            if (it.getStartDate() == null || it.getEndDate() == null) continue;
+            // 不可选区间末尾 = 订单还车日 + 整备天数（含）
+            LocalDate rangeEnd = it.getEndDate().plusDays(PREP_DAYS);
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("startDate", it.getStartDate().toString());
+            r.put("endDate", rangeEnd.toString());
+            ranges.add(r);
+            if (maxEnd == null || it.getEndDate().isAfter(maxEnd)) {
+                maxEnd = it.getEndDate();
+            }
+        }
+        LocalDate availableDate = null;
+        if (maxEnd != null) {
+            availableDate = maxEnd.plusDays(PREP_DAYS + 1L);
+            if (availableDate.isBefore(today)) {
+                availableDate = today;
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("carId", carId);
+        result.put("availableDate", availableDate != null ? availableDate.toString() : null);
+        result.put("unavailableRanges", ranges);
+        return result;
+    }
+
+    /**
+     * 校验租期是否与占用订单（出租+整备期）冲突，冲突时抛业务异常
+     * 供加购/购物车改期/下单使用（前后端双校验，防止绕过前端提交被占租期）
+     * @param carId     车辆ID
+     * @param startDate 起租日期
+     * @param endDate   还车日期（与前端展示口径一致：start 至 end 为所选租期）
+     */
+    public void validateRentAvailability(Long carId, LocalDate startDate, LocalDate endDate) {
+        if (carId == null || startDate == null || endDate == null || !endDate.isAfter(startDate)) {
+            return;
+        }
+        for (OrderItem it : occupiedItemsOf(carId)) {
+            if (it.getStartDate() == null || it.getEndDate() == null) continue;
+            // 不可用闭区间 [occStart, occEnd]：租期 + 整备期
+            LocalDate occStart = it.getStartDate();
+            LocalDate occEnd = it.getEndDate().plusDays(PREP_DAYS);
+            // 所选租期 [start, end] 与不可用区间重叠即冲突
+            if (!startDate.isAfter(occEnd) && !endDate.isBefore(occStart)) {
+                throw new BusinessException("该车在所选日期内已被租出或在整备中，请更换租期");
+            }
+        }
     }
 
     private CarConfig emptyConfig() {
