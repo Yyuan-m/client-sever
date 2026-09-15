@@ -355,7 +355,9 @@ public class CarService {
     /**
      * 批量注入被租状态/原因/最早可租日期
      * 以实际订单为准（pending/renting），覆盖 car_info.status 可能不准确的问题：
-     *   - 有占用订单 → status='rented' / statusName='已出租' / rentReason / availableDate
+     *   - 今天落在任一占用区间（租期 + 整备期）内 → status='rented' / statusName='已出租' / rentReason / availableDate
+     *   - 仅有未来预约（今天空闲）→ 维持可租状态，用户可租今天起至预约日前的时段；
+     *     精确不可选区间由 /availability 接口返回，详情页日历禁用
      *   - 无订单但 car_info.status 为维修类 → rentReason='车辆维修保养中'
      *   - 其余 → 维持可租，rentReason=null
      * 一次查询所有相关订单，避免 N+1
@@ -388,21 +390,44 @@ public class CarService {
             List<OrderItem> occupied = byCar.get(car.getId());
             if (occupied == null || occupied.isEmpty()) continue;
 
-            // 有占用订单：强制标记为已出租（覆盖 car_info.status 可能不准的情况）
+            // 仅当"今天"落在任一占用区间（租期 + 整备期）内，才视为已出租；
+            // 仅有未来预约时车辆今天仍可租（可租今天至预约日前、以及预约结束+整备之后的时段）
+            boolean rentingToday = false;    // 今天在租期内（renting 订单）
+            boolean reservedToday = false;   // 今天在预约占用期内（pending 订单）
+            LocalDate maxEnd = null;
+            for (OrderItem it : occupied) {
+                if (it.getStartDate() == null || it.getEndDate() == null) continue;
+                LocalDate occEnd = it.getEndDate().plusDays(PREP_DAYS);
+                boolean todayIn = !today.isBefore(it.getStartDate()) && !today.isAfter(occEnd);
+                if (todayIn) {
+                    RentalOrder occ = rentalOrderMapper.selectById(it.getOrderId());
+                    if (occ != null && "renting".equals(occ.getStatus())) {
+                        rentingToday = true;
+                    } else {
+                        reservedToday = true;
+                    }
+                }
+                if (maxEnd == null || it.getEndDate().isAfter(maxEnd)) {
+                    maxEnd = it.getEndDate();
+                }
+            }
+            if (!rentingToday && !reservedToday) {
+                // 今天空闲：仅有未来预约，恢复为可租（覆盖 car_info.status 可能被提前置为 rented 的情况；
+                // 维修中除外，维修状态由后台维护）；精确禁用区间由 /availability 接口返回
+                if (!"maintenance".equals(car.getStatus()) && "rented".equals(car.getStatus())) {
+                    car.setStatus("available");
+                    car.setStatusName("可租");
+                    car.setRentReason(null);
+                }
+                continue;
+            }
+
+            // 今天被占用：强制标记为已出租（覆盖 car_info.status 可能不准的情况）
             car.setStatus("rented");
             car.setStatusName("已出租");
-
-            // 原因：优先"租赁中"（renting），其次"已被预约"（pending）
-            RentalOrder firstOcc = rentalOrderMapper.selectById(occupied.get(0).getOrderId());
-            boolean hasRenting = firstOcc != null && "renting".equals(firstOcc.getStatus());
-            car.setRentReason(hasRenting ? "车辆租赁中" : "已被预约");
+            car.setRentReason(rentingToday ? "车辆租赁中" : "已被预约");
 
             // 最早可租日：最大还车日 + 整备天数 + 1（如 09-07 还车、整备 2 天 → 09-10 起可租）
-            LocalDate maxEnd = occupied.stream()
-                    .map(OrderItem::getEndDate)
-                    .filter(Objects::nonNull)
-                    .max(LocalDate::compareTo)
-                    .orElse(null);
             if (maxEnd == null) continue;
             LocalDate available = maxEnd.plusDays(PREP_DAYS + 1L);
             if (available.isBefore(today)) {
@@ -439,10 +464,12 @@ public class CarService {
     }
 
     /**
-     * 车辆可用期查询（购物车改期弹窗/日历禁用用）
+     * 车辆可用期查询（详情页日历禁用/购物车改期用）
      * @return { carId, availableDate, unavailableRanges:[{startDate,endDate}] }
      * unavailableRanges 为闭区间 [startDate, endDate]：租期 [start, end] 再往后加 PREP 天整备期
-     * （如租 09-01 至 09-07、整备 2 天 → 09-01~09-09 均不可选，availableDate=09-10）
+     * （如租 09-01 至 09-07、整备 2 天 → 09-01~09-09 均不可选）
+     * availableDate 为"今天起第一个空闲日"：今天空闲即今天；今天被占用则为占用区间结束的次日。
+     * 未来预约不再整体禁租：今天至预约开始前、预约结束后+整备之后的时段均可租（由区间精确禁用）
      */
     public Map<String, Object> getAvailability(Long carId) {
         Car car = carMapper.selectAdminCarById(carId);
@@ -452,7 +479,6 @@ public class CarService {
         List<OrderItem> occupied = occupiedItemsOf(carId);
         List<Map<String, Object>> ranges = new ArrayList<>();
         LocalDate today = LocalDate.now();
-        LocalDate maxEnd = null;
         for (OrderItem it : occupied) {
             if (it.getStartDate() == null || it.getEndDate() == null) continue;
             // 不可选区间末尾 = 订单还车日 + 整备天数（含）
@@ -461,20 +487,24 @@ public class CarService {
             r.put("startDate", it.getStartDate().toString());
             r.put("endDate", rangeEnd.toString());
             ranges.add(r);
-            if (maxEnd == null || it.getEndDate().isAfter(maxEnd)) {
-                maxEnd = it.getEndDate();
-            }
         }
-        LocalDate availableDate = null;
-        if (maxEnd != null) {
-            availableDate = maxEnd.plusDays(PREP_DAYS + 1L);
-            if (availableDate.isBefore(today)) {
-                availableDate = today;
+        // 最早可起租日：从今天起找到第一个不在任何不可选区间内的日期
+        LocalDate availableDate = today;
+        boolean moved = true;
+        while (moved) {
+            moved = false;
+            for (Map<String, Object> r : ranges) {
+                LocalDate s = LocalDate.parse((String) r.get("startDate"));
+                LocalDate e = LocalDate.parse((String) r.get("endDate"));
+                if (!availableDate.isBefore(s) && !availableDate.isAfter(e)) {
+                    availableDate = e.plusDays(1);
+                    moved = true;
+                }
             }
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("carId", carId);
-        result.put("availableDate", availableDate != null ? availableDate.toString() : null);
+        result.put("availableDate", availableDate.toString());
         result.put("unavailableRanges", ranges);
         return result;
     }
