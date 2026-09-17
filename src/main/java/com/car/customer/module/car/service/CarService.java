@@ -378,9 +378,13 @@ public class CarService {
                 .filter(Objects::nonNull)
                 .toList();
         if (carIds.isEmpty()) return;
-        List<OrderItem> allOccupied = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
-                .in(OrderItem::getCarId, carIds)
-                .in(OrderItem::getOrderId, occupiedOrderIds()));
+        java.util.Set<Long> occIds = occupiedOrderIds();
+        // 无任何未完成（pending/renting）订单时不存在占用，避免「跳过订单过滤」把已完成的明细当占用
+        List<OrderItem> allOccupied = occIds.isEmpty()
+                ? Collections.emptyList()
+                : orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
+                        .in(OrderItem::getCarId, carIds)
+                        .in(OrderItem::getOrderId, occIds));
         // 按车分组
         Map<Long, List<OrderItem>> byCar = allOccupied.stream()
                 .collect(Collectors.groupingBy(OrderItem::getCarId));
@@ -388,7 +392,16 @@ public class CarService {
         LocalDate today = LocalDate.now();
         for (Car car : cars) {
             List<OrderItem> occupied = byCar.get(car.getId());
-            if (occupied == null || occupied.isEmpty()) continue;
+            if (occupied == null || occupied.isEmpty()) {
+                // 无任何未完成（pending/renting）订单：该车当前可租。
+                // 覆盖 car_info.status 遗留的 rented 旧值（如订单已完成但状态未回写），维修中除外。
+                if (!"maintenance".equals(car.getStatus()) && "rented".equals(car.getStatus())) {
+                    car.setStatus("available");
+                    car.setStatusName("可租");
+                    car.setRentReason(null);
+                }
+                continue;
+            }
 
             // 仅当"今天"落在任一占用区间（租期 + 整备期）内，才视为已出租；
             // 仅有未来预约时车辆今天仍可租（可租今天至预约日前、以及预约结束+整备之后的时段）
@@ -458,9 +471,12 @@ public class CarService {
      */
     private List<OrderItem> occupiedItemsOf(Long carId) {
         if (carId == null) return Collections.emptyList();
+        java.util.Set<Long> occIds = occupiedOrderIds();
+        // 无未完成订单即无占用，避免返回含已完成的全部明细
+        if (occIds.isEmpty()) return Collections.emptyList();
         return orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
                 .eq(OrderItem::getCarId, carId)
-                .in(OrderItem::getOrderId, occupiedOrderIds()));
+                .in(OrderItem::getOrderId, occIds));
     }
 
     /**
@@ -483,6 +499,8 @@ public class CarService {
             if (it.getStartDate() == null || it.getEndDate() == null) continue;
             // 不可选区间末尾 = 订单还车日 + 整备天数（含）
             LocalDate rangeEnd = it.getEndDate().plusDays(PREP_DAYS);
+            // 仅展示当前/未来仍有效的占用区间：整备期已结束（整段早于今天）的时间段不再展示
+            if (rangeEnd.isBefore(today)) continue;
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("startDate", it.getStartDate().toString());
             r.put("endDate", rangeEnd.toString());
